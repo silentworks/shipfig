@@ -18,5 +18,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // /api/health stays open for the platform health check; it reveals nothing.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health$).*)"],
 };
