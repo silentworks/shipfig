@@ -1,5 +1,6 @@
-# Shipfig on Fly.io. Set `app` and `primary_region`, then see README "Deploy".
-app = "shipfig-change-me"
+# Shipfig on Fly.io (live at https://shipfig-silentworks.fly.dev). For your
+# own deployment, change `app` and `primary_region`, then see README "Deploy".
+app = "shipfig-silentworks"
 primary_region = "lhr"
 
 [build]
