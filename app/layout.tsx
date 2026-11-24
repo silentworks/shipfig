@@ -27,6 +27,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/" className="font-semibold tracking-tight">
               Shipfig
             </Link>
+            <nav aria-label="Main" className="ml-6 flex gap-4 text-sm text-zinc-600 dark:text-zinc-400">
+              <Link href="/" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+                Issues
+              </Link>
+              <Link href="/jobs" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+                Jobs
+              </Link>
+            </nav>
           </div>
         </header>
         <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6">{children}</main>
