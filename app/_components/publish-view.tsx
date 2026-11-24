@@ -26,59 +26,51 @@ export function PublishView({
 
   return (
     <Panel
-      title="Publish"
+      title="Pull request"
+      className={awaiting ? "ring-1 ring-amber-500/35" : ""}
       actions={
         awaiting ? (
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => onDecision("reject", false)} disabled={busy}>
-              Reject
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => onDecision("approve", acknowledged)}
-              disabled={busy || !job.diffHash || (unverified && !acknowledged)}
-            >
-              Approve &amp; open draft PR
-            </Button>
-          </div>
+          <StatusBadge tone="waiting">Ready for your approval</StatusBadge>
         ) : result ? (
           <StatusBadge tone="completed">PR #{result.prNumber}</StatusBadge>
         ) : job.state === "publishing" ? (
-          <StatusBadge tone="working">Publishing</StatusBadge>
+          <StatusBadge tone="working">Opening PR</StatusBadge>
         ) : null
       }
     >
       <div className="flex flex-col gap-3 text-sm">
         {result ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-emerald-950 dark:text-emerald-100">
-            <p className="font-semibold">
-              {result.reused.pullRequest ? "Pull request" : result.draft ? "Draft pull request opened" : "Pull request opened"}:{" "}
-              <a href={result.prUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
-                #{result.prNumber} ↗
-              </a>
-            </p>
-            <p className="mt-1 font-mono text-xs opacity-80">
-              {result.branch} @ {result.commitSha.slice(0, 12)} · {result.prState}
-              {result.reused.commit || result.reused.pullRequest ? " · reused from earlier attempt" : ""}
-            </p>
-            {result.baseMoved && (
-              <p className="mt-1.5 text-xs">The base branch moved after this job started; check the PR for conflicts.</p>
-            )}
-            <p className="mt-1.5 text-xs opacity-85">
-              Shipfig never merges. Review the PR on GitHub and mark it ready when you are happy.
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-950 dark:text-emerald-100">
+            <div>
+              <p className="font-semibold">
+                {result.reused.pullRequest ? "Pull request ready" : result.draft ? "Draft pull request opened" : "Pull request opened"}
+              </p>
+              <p className="mt-0.5 text-xs opacity-85">
+                Shipfig never merges automatically. Review the PR on GitHub and mark it ready when you&apos;re happy.
+              </p>
+              {result.baseMoved && (
+                <p className="mt-1 text-xs font-medium">The base branch moved after this job started — check the PR for conflicts.</p>
+              )}
+            </div>
+            <a
+              href={result.prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 shrink-0 items-center rounded-md bg-emerald-600 px-3.5 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              Open PR #{result.prNumber} on GitHub ↗
+            </a>
           </div>
         ) : job.state === "publishing" ? (
           <p role="status" className="text-zinc-600 dark:text-zinc-400">
-            Publishing the approved change to GitHub…
+            Opening your draft pull request on GitHub…
           </p>
         ) : awaiting ? (
           <>
             <p className="text-sm text-zinc-700 dark:text-zinc-300">
-              Approving creates branch <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-900">{job.branchName}</code> with
-              the exact diff shown below and opens a draft pull request for{" "}
-              <span className="font-mono text-xs">
-                {job.repoOwner}/{job.repoName}#{job.issueNumber}
+              Review the verification results and code changes below. When you approve, Shipfig will open a draft pull request on{" "}
+              <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                {job.repoOwner}/{job.repoName}
               </span>
               . Nothing is merged automatically.
             </p>
@@ -90,15 +82,22 @@ export function PublishView({
                   checked={acknowledged}
                   onChange={(e) => setAcknowledged(e.target.checked)}
                 />
-                <span>I understand some requested checks could not run, so this change is unverified. The PR will say so.</span>
+                <span>I understand some checks could not run, so this change is unverified.</span>
               </label>
             )}
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+              <Button variant="secondary" onClick={() => onDecision("reject", false)} disabled={busy}>
+                Reject
+              </Button>
+              <Button onClick={() => onDecision("approve", acknowledged)} disabled={busy || !job.diffHash || (unverified && !acknowledged)}>
+                Approve &amp; open draft PR
+              </Button>
+            </div>
           </>
         ) : null}
         {job.publishApprovedAt && (
-          <p className="text-[11px] text-zinc-500">
-            Approved by {job.publishApprovedBy} at <time dateTime={job.publishApprovedAt}>{new Date(job.publishApprovedAt).toLocaleString()}</time> for diff{" "}
-            <span className="font-mono">{job.publishApprovedHash?.slice(0, 12)}</span>
+          <p className="text-xs text-zinc-500">
+            Approved by {job.publishApprovedBy} on <time dateTime={job.publishApprovedAt}>{new Date(job.publishApprovedAt).toLocaleString()}</time>
           </p>
         )}
       </div>

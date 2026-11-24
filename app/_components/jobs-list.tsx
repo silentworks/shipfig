@@ -26,7 +26,7 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** Recent jobs, newest first, with quick status filters and scannable Linear-style rows. */
+/** Recent jobs, newest first, with quick status filters and calm, scannable rows. */
 export function JobsList() {
   const jobs = useResource<{ jobs: Job[]; activeJobId: string | null }>("/api/jobs");
   const [filter, setFilter] = useState<JobFilter>("all");
@@ -73,7 +73,7 @@ export function JobsList() {
   ];
 
   return (
-    <section className="overflow-hidden rounded-lg border border-zinc-200/80 bg-white dark:border-zinc-800/80 dark:bg-zinc-950">
+    <section className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white dark:border-zinc-800/80 dark:bg-zinc-950">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 px-3 py-2 dark:border-zinc-800/80">
         <div role="tablist" aria-label="Filter jobs" className="flex flex-wrap items-center gap-1">
           {tabs.map((tab) => {
@@ -92,7 +92,7 @@ export function JobsList() {
                 }`}
               >
                 <span>{tab.label}</span>
-                <span className={`font-mono text-[10px] ${active ? "opacity-75" : "text-zinc-400"}`}>{counts[tab.key]}</span>
+                <span className={`text-[11px] ${active ? "opacity-75" : "text-zinc-400"}`}>{counts[tab.key]}</span>
               </button>
             );
           })}
@@ -124,40 +124,33 @@ export function JobsList() {
         <ul className="divide-y divide-zinc-100 dark:divide-zinc-900">
           {filtered.map((job) => {
             const isActive = job.id === jobs.data.activeJobId;
-            const reason = job.failureReason ?? job.cancelReason;
             return (
               <li
                 key={job.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50"
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 text-sm transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50"
               >
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/jobs/${job.id}`}
-                        className="truncate font-medium text-zinc-900 hover:underline dark:text-zinc-100"
-                      >
-                        {job.issueTitle}
-                      </Link>
-                      {isActive && (
-                        <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-sky-700 dark:text-sky-300">
-                          ACTIVE
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
-                      <span className="font-mono">
-                        {job.repoOwner}/{job.repoName}#{job.issueNumber}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/jobs/${job.id}`}
+                      className="truncate font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+                    >
+                      {job.issueTitle}
+                    </Link>
+                    {isActive && (
+                      <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                        Active
                       </span>
-                      <span aria-hidden>·</span>
-                      <Link href={`/jobs/${job.id}`} className="font-mono hover:text-zinc-900 dark:hover:text-zinc-200">
-                        {job.id}
-                      </Link>
-                      <span aria-hidden>·</span>
-                      <time dateTime={job.createdAt} title={new Date(job.createdAt).toLocaleString()}>
-                        {relativeTime(job.createdAt)}
-                      </time>
-                    </div>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
+                    <span>
+                      {job.repoOwner}/{job.repoName} #{job.issueNumber}
+                    </span>
+                    <span aria-hidden>·</span>
+                    <time dateTime={job.createdAt} title={new Date(job.createdAt).toLocaleString()}>
+                      {relativeTime(job.createdAt)}
+                    </time>
                   </div>
                 </div>
 
@@ -167,18 +160,15 @@ export function JobsList() {
                       href={job.prUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-xs font-medium text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+                      className="inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
                     >
                       PR #{job.publishResult?.prNumber ?? ""} ↗
                     </a>
                   )}
-                  <StatusBadge tone={badgeTone(job)}>
-                    {STATE_LABELS[job.state]}
-                    {reason ? ` · ${reason.replace(/_/g, " ")}` : ""}
-                  </StatusBadge>
+                  <StatusBadge tone={badgeTone(job)}>{STATE_LABELS[job.state]}</StatusBadge>
                   <Link
                     href={`/jobs/${job.id}`}
-                    aria-label={`Open job ${job.id}`}
+                    aria-label={`Open job for ${job.issueTitle}`}
                     className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
                   >
                     →

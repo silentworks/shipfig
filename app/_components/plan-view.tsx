@@ -5,9 +5,9 @@ import type { Job } from "@/lib/jobs/store";
 import { Button, CollapsiblePanel, Panel, StatusBadge } from "./ui";
 
 function List({ items, mono = false }: { items: string[]; mono?: boolean }) {
-  if (items.length === 0) return <p className="text-xs text-zinc-500">None</p>;
+  if (items.length === 0) return <p className="text-sm text-zinc-500">None</p>;
   return (
-    <ul className={`list-disc space-y-1 pl-4 text-sm text-zinc-800 dark:text-zinc-200 ${mono ? "font-mono text-xs" : ""}`}>
+    <ul className={`list-disc space-y-1.5 pl-4 text-sm text-zinc-700 dark:text-zinc-300 ${mono ? "font-mono text-xs" : ""}`}>
       {items.map((item, i) => (
         <li key={i} className="break-words">
           {item}
@@ -20,7 +20,7 @@ function List({ items, mono = false }: { items: string[]; mono?: boolean }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{title}</h3>
+      <h3 className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{title}</h3>
       {children}
     </div>
   );
@@ -35,11 +35,13 @@ export function PlanView({
   busy,
   onDecision,
   collapsible = false,
+  highlightApproval = false,
 }: {
   job: Job;
   busy: boolean;
   onDecision(decision: "approve" | "reject"): void;
   collapsible?: boolean;
+  highlightApproval?: boolean;
 }) {
   const record = job.plan as PlanRecord | null;
   if (!record?.plan) return null;
@@ -53,60 +55,67 @@ export function PlanView({
           role="alert"
           className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200"
         >
-          <p className="font-medium">Needs clarification. Nothing was changed.</p>
+          <p className="font-medium">Needs clarification before continuing</p>
           <p className="mt-1 whitespace-pre-wrap break-words">{plan.clarificationQuestion}</p>
         </div>
       )}
+
       <Section title="Summary">
         <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">{plan.summary}</p>
       </Section>
-      <Section title="Proposed changes">
+
+      <Section title="What will change">
         <List items={plan.changes} />
       </Section>
-      <Section title="Files">
+
+      <Section title="Files to update">
         <List
           mono
           items={[
             ...record.existingFiles,
             ...record.newFiles.map((f) => `${f} (new)`),
-            ...record.invalidFiles.map((f) => `${f} (rejected: invalid path)`),
+            ...record.invalidFiles.map((f) => `${f} (ignored: invalid path)`),
           ]}
         />
       </Section>
-      <Section title="Verification">
-        <p className="text-sm text-zinc-800 dark:text-zinc-200">
-          {record.runnableChecks.length > 0 ? (
-            <span className="font-mono text-xs">{record.runnableChecks.map((c) => `npm run ${c}`).join(", ")}</span>
-          ) : (
-            "No runnable checks"
-          )}
+
+      <Section title="Checks to run">
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          {record.runnableChecks.length > 0 ? record.runnableChecks.join(", ") : "No automated checks configured"}
           {record.missingChecks.length > 0 && (
             <span className="text-xs text-amber-700 dark:text-amber-300">
               {" "}
-              · no script for {record.missingChecks.join(", ")} (reported as missing, not passing)
+              · missing scripts: {record.missingChecks.join(", ")}
             </span>
           )}
         </p>
       </Section>
+
       {plan.risks.length > 0 && (
-        <Section title="Risks">
+        <Section title="Things to watch out for">
           <List items={plan.risks} />
         </Section>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-3 text-[11px] text-zinc-500 dark:border-zinc-900">
-        <span className="font-mono">
-          {record.analysis.model} · {record.analysis.turns} turns · {record.analysis.toolCalls} tool calls ·{" "}
-          {record.analysis.filesRead.length} files read · {record.analysis.inputTokens + record.analysis.outputTokens} tokens
-        </span>
-        {job.planApprovedAt && (
-          <span>
-            Approved by {job.planApprovedBy} at <time dateTime={job.planApprovedAt}>{new Date(job.planApprovedAt).toLocaleString()}</time>
-          </span>
-        )}
-      </div>
+
       {awaiting && (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          Approving lets Shipfig edit the checkout in its isolated Sprite and run checks. Nothing is published without a second approval.
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3">
+          <p className="text-xs text-amber-950 dark:text-amber-100">
+            Approving lets Shipfig make these edits and run checks in an isolated workspace. Nothing is pushed to GitHub without your final approval.
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="secondary" onClick={() => onDecision("reject")} disabled={busy}>
+              Reject
+            </Button>
+            <Button onClick={() => onDecision("approve")} disabled={busy}>
+              Approve plan
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {job.planApprovedAt && (
+        <p className="text-xs text-zinc-500">
+          Approved by {job.planApprovedBy} on <time dateTime={job.planApprovedAt}>{new Date(job.planApprovedAt).toLocaleString()}</time>
         </p>
       )}
     </div>
@@ -127,17 +136,11 @@ export function PlanView({
 
   return (
     <Panel
-      title="Plan"
+      title="Proposed plan"
+      className={highlightApproval ? "ring-1 ring-amber-500/35" : ""}
       actions={
         awaiting ? (
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => onDecision("reject")} disabled={busy}>
-              Reject
-            </Button>
-            <Button size="sm" onClick={() => onDecision("approve")} disabled={busy}>
-              Approve plan
-            </Button>
-          </div>
+          <StatusBadge tone="waiting">Waiting for your approval</StatusBadge>
         ) : job.planApprovedAt ? (
           <StatusBadge tone="completed">Approved</StatusBadge>
         ) : null

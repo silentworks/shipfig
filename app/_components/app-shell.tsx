@@ -10,6 +10,125 @@ import { CommandPalette } from "./command-palette";
 import { Kbd } from "./ui";
 
 const ACTIVE_POLL_MS = 5_000;
+const THEME_STORAGE_KEY = "shipfig-theme";
+type ThemeMode = "light" | "dark" | "system";
+
+function applyTheme(mode: ThemeMode) {
+  const isDark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.classList.toggle("dark", isDark);
+}
+
+function useThemeMode() {
+  const [mode, setMode] = useState<ThemeMode>("light");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(THEME_STORAGE_KEY);
+      if (saved === "light" || saved === "dark" || saved === "system") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setMode(saved);
+        applyTheme(saved);
+      } else {
+        applyTheme("light");
+      }
+    } catch {
+      applyTheme("light");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [mode]);
+
+  function selectMode(next: ThemeMode) {
+    setMode(next);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage errors in restricted contexts.
+    }
+    applyTheme(next);
+  }
+
+  return { mode, selectMode };
+}
+
+function ThemeSelector({ mode, onChange }: { mode: ThemeMode; onChange: (mode: ThemeMode) => void }) {
+  const options: { value: ThemeMode; label: string; icon: ReactNode }[] = [
+    {
+      value: "light",
+      label: "Light",
+      icon: (
+        <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+          <circle cx="8" cy="8" r="2.75" stroke="currentColor" strokeWidth="1.4" />
+          <path
+            d="M8 2v1.25M8 12.75V14M2 8h1.25M12.75 8H14M3.76 3.76l.88.88M11.36 11.36l.88.88M12.24 3.76l-.88.88M4.64 11.36l-.88.88"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+          />
+        </svg>
+      ),
+    },
+    {
+      value: "dark",
+      label: "Dark",
+      icon: (
+        <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+          <path
+            d="M12.6 10.2A5.25 5.25 0 0 1 5.8 3.4a5.25 5.25 0 1 0 6.8 6.8Z"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ),
+    },
+    {
+      value: "system",
+      label: "Auto",
+      icon: (
+        <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+          <rect x="2.25" y="3" width="11.5" height="8" rx="1.25" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M5.75 13h4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+  ];
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Color theme"
+      className="grid grid-cols-3 gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-100/70 p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      {options.map((opt) => {
+        const active = mode === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(opt.value)}
+            className={`flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors ${
+              active
+                ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            }`}
+          >
+            {opt.icon}
+            <span>{opt.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function useActiveJob() {
   const [job, setJob] = useState<Job | null>(null);
@@ -57,7 +176,7 @@ function Breadcrumbs() {
         {repo && (
           <>
             <span aria-hidden className="text-zinc-300 dark:text-zinc-700">/</span>
-            <Link href={`/?repo=${encodeURIComponent(repo)}`} className="truncate font-mono hover:text-zinc-900 dark:hover:text-zinc-100">
+            <Link href={`/?repo=${encodeURIComponent(repo)}`} className="truncate hover:text-zinc-900 dark:hover:text-zinc-100">
               {repo}
             </Link>
           </>
@@ -65,7 +184,7 @@ function Breadcrumbs() {
         {repo && issue && (
           <>
             <span aria-hidden className="text-zinc-300 dark:text-zinc-700">/</span>
-            <span className="font-mono text-zinc-900 dark:text-zinc-100">#{issue}</span>
+            <span className="text-zinc-900 dark:text-zinc-100">#{issue}</span>
           </>
         )}
       </nav>
@@ -81,14 +200,13 @@ function Breadcrumbs() {
   }
 
   if (pathname.startsWith("/jobs/")) {
-    const id = pathname.slice("/jobs/".length);
     return (
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500">
         <Link href="/jobs" className="hover:text-zinc-900 dark:hover:text-zinc-100">
           Jobs
         </Link>
         <span aria-hidden className="text-zinc-300 dark:text-zinc-700">/</span>
-        <span className="truncate font-mono text-zinc-900 dark:text-zinc-100">{id}</span>
+        <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">Job details</span>
       </nav>
     );
   }
@@ -178,6 +296,7 @@ function MobileNavDynamic() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const activeJob = useActiveJob();
+  const { mode, selectMode } = useThemeMode();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
@@ -227,8 +346,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <SidebarNavDynamic />
         </Suspense>
 
-        {activeJob && (
-          <div className="mt-auto p-2.5">
+        <div className="mt-auto flex flex-col gap-2.5 p-2.5">
+          {activeJob && (
             <Link
               href={`/jobs/${activeJob.id}`}
               className={`block rounded-lg border p-2.5 text-xs transition-colors ${
@@ -244,13 +363,13 @@ export function AppShell({ children }: { children: ReactNode }) {
                 />
                 <span className="truncate">{needsYou ? "Needs your approval" : "Active job"}</span>
               </div>
-              <p className="mt-1 truncate font-mono text-[11px] opacity-80">
-                {activeJob.repoOwner}/{activeJob.repoName}#{activeJob.issueNumber}
-              </p>
-              <p className="mt-0.5 truncate text-[11px] opacity-75">{STATE_LABELS[activeJob.state]}</p>
+              <p className="mt-1 truncate text-[11px] opacity-85">{activeJob.issueTitle}</p>
+              <p className="mt-0.5 truncate text-[11px] opacity-65">{STATE_LABELS[activeJob.state]}</p>
             </Link>
-          </div>
-        )}
+          )}
+
+          <ThemeSelector mode={mode} onChange={selectMode} />
+        </div>
       </aside>
 
       {/* Main content area */}
@@ -291,6 +410,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
             <button
               type="button"
+              onClick={() => selectMode(mode === "dark" ? "light" : "dark")}
+              aria-label="Toggle color theme"
+              className="inline-flex h-7 items-center rounded-md border border-zinc-200/80 px-2 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:text-zinc-800 md:hidden dark:border-zinc-800 dark:text-zinc-400"
+            >
+              {mode === "dark" ? "Light" : "Dark"}
+            </button>
+            <button
+              type="button"
               onClick={() => setPaletteOpen(true)}
               aria-label="Open command palette"
               className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200/80 px-2 py-1 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:text-zinc-800 md:hidden dark:border-zinc-800 dark:text-zinc-400"
@@ -301,7 +428,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">{children}</main>
+        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">{children}</main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
