@@ -14,14 +14,14 @@ import { ReadBudget, listTrackedFiles, readOnlyTools, readRepoFile } from "./wor
  * tools; nothing is edited until the plan is approved.
  */
 
-export const CHECKS = ["test", "lint", "build"] as const;
+export const CHECKS = ["test", "lint", "typecheck", "build"] as const;
 export type Check = (typeof CHECKS)[number];
 
 export const planSchema = z.object({
   summary: z.string().max(1500).describe("What the issue asks for and the smallest fix, in plain language"),
   files: z.array(z.string().max(300)).max(12).describe("Repo-relative files to change or add"),
   changes: z.array(z.string().max(500)).max(8).describe("Concrete proposed changes, one per item"),
-  checks: z.array(z.enum(CHECKS)).max(3).describe("npm scripts to run for verification"),
+  checks: z.array(z.enum(CHECKS)).max(CHECKS.length).describe("npm scripts to run for verification"),
   risks: z.array(z.string().max(500)).max(8),
   needsClarification: z.boolean(),
   clarificationQuestion: z.string().max(1000).nullable().describe("Question for the maintainer when needsClarification is true"),
@@ -67,8 +67,9 @@ Rules:
 - Use list_files, read_file and search_code to confirm every path you list.
   Only list files you have seen, or new test files next to existing ones.
 - Keep the plan small: at most 12 files and 8 changes.
-- checks: choose from test, lint, build, only where the repository has a
-  matching npm script (listed in the context).
+- checks: choose from test, lint, typecheck, build, only where the repository
+  has a matching npm script (listed in the context). Include every one the
+  issue asks to pass.
 - Set needsClarification=true (and ask one specific question) if the issue is
   ambiguous, would need secrets or network access, touches deployment or CI,
   or is not a code change. Otherwise clarificationQuestion is null.`;

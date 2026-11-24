@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AgentLimitError, AgentStoppedError, defineTool, runToolLoop } from "@/lib/agent/loop";
 import { PathPolicyError, isSecretPath, normalizeRepoPath, resolveInside } from "@/lib/agent/paths";
-import { type Plan, type PlanRecord, buildPlannerContext, planIssue, untrusted } from "@/lib/agent/planner";
+import { CHECKS, type Plan, type PlanRecord, buildPlannerContext, planIssue, planSchema, untrusted } from "@/lib/agent/planner";
+import { checkCommand } from "@/lib/verify/checks";
 import type { Issue } from "@/lib/github/schemas";
 import { openDatabase } from "@/lib/jobs/db";
 import { type RunnerDeps, runJob } from "@/lib/jobs/runner";
@@ -239,3 +240,11 @@ function routedSandbox(base: FakeSandbox, repo: FakeSandbox): FakeSandbox {
     return (target as unknown as { handler: (a: string[], o: object) => object | undefined }).handler(argv, {});
   });
 }
+
+describe("typecheck check", () => {
+  it("is a plannable check that runs the repository's typecheck script", () => {
+    expect(CHECKS).toContain("typecheck");
+    expect(planSchema.shape.checks.safeParse(["test", "lint", "typecheck", "build"]).success).toBe(true);
+    expect(checkCommand("typecheck")).toEqual(["npm", "run", "typecheck"]);
+  });
+});

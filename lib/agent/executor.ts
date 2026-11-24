@@ -42,7 +42,7 @@ Rules:
 export const EXECUTOR_LIMITS = {
   maxWriteChars: 100_000,
   maxChangedFiles: 15,
-  maxCheckRuns: 6,
+  maxCheckRuns: 8,
 };
 
 export const executorReportSchema = z.object({

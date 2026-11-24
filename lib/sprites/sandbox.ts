@@ -34,6 +34,8 @@ export interface CommandResult {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  /** Times the command was re-sent because the sprite's container was not running (it never started). */
+  retries?: number;
 }
 
 export const JOB_SPRITE_LABEL = "shipfig-job";
@@ -62,8 +64,23 @@ export function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && !(error instanceof ExecError) && /timed out/i.test(error.message);
 }
 
-class SpriteSandbox implements Sandbox {
-  constructor(private readonly sprite: Sprite) {}
+/**
+ * Sprites runtime error for a command that never started because the
+ * sprite's container was not running (seen right after a sprite is created
+ * or its policies change). The command did not run, so re-sending it is safe.
+ */
+export function isContainerMissing(stderr: string): boolean {
+  return /container `?app`? does not exist|\/run\/crun\/app\/status/.test(stderr);
+}
+
+/** Waits before each re-send of a command that hit a missing container. */
+export const CONTAINER_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+
+export class SpriteSandbox implements Sandbox {
+  constructor(
+    private readonly sprite: Sprite,
+    private readonly retryDelaysMs: readonly number[] = CONTAINER_RETRY_DELAYS_MS,
+  ) {}
 
   get name() {
     return this.sprite.name;
@@ -77,6 +94,7 @@ class SpriteSandbox implements Sandbox {
     const [file, ...args] = assertSafeArgv(argv);
     const max = options.maxOutputChars ?? 16_000;
     const started = Date.now();
+    let retries = 0;
     const done = (exitCode: number | null, stdout: unknown, stderr: unknown, timedOut = false): CommandResult => ({
       argv: [file, ...args],
       exitCode,
@@ -84,19 +102,30 @@ class SpriteSandbox implements Sandbox {
       stderr: sanitizeOutput(String(stderr ?? ""), max),
       durationMs: Date.now() - started,
       timedOut,
+      ...(retries > 0 ? { retries } : {}),
     });
-    try {
-      const r = await this.sprite.execFile(file, args, {
-        cwd: options.cwd,
-        env: { ...BASE_ENV, ...options.env },
-        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        maxBuffer: 20 * 1024 * 1024,
-      });
-      return done(r.exitCode, r.stdout, r.stderr);
-    } catch (error) {
-      if (error instanceof ExecError) return done(error.exitCode, error.stdout, error.stderr);
-      if (isTimeoutError(error)) return done(null, "", `Command timed out after ${options.timeoutMs ?? DEFAULT_TIMEOUT_MS} ms`, true);
-      throw error;
+    for (;;) {
+      try {
+        const r = await this.sprite.execFile(file, args, {
+          cwd: options.cwd,
+          env: { ...BASE_ENV, ...options.env },
+          timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxBuffer: 20 * 1024 * 1024,
+        });
+        return done(r.exitCode, r.stdout, r.stderr);
+      } catch (error) {
+        if (error instanceof ExecError) {
+          const delay = this.retryDelaysMs[retries];
+          if (delay !== undefined && isContainerMissing(String(error.stderr ?? ""))) {
+            retries++;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          return done(error.exitCode, error.stdout, error.stderr);
+        }
+        if (isTimeoutError(error)) return done(null, "", `Command timed out after ${options.timeoutMs ?? DEFAULT_TIMEOUT_MS} ms`, true);
+        throw error;
+      }
     }
   }
 

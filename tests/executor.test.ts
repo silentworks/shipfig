@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type ExecutorSession, executePlan, writeTools } from "@/lib/agent/executor";
+import { EXECUTOR_LIMITS, type ExecutorSession, executePlan, writeTools } from "@/lib/agent/executor";
 import type { Tool } from "@/lib/agent/loop";
 import { policyViolations, writePolicy } from "@/lib/agent/policy";
 import type { Plan } from "@/lib/agent/planner";
@@ -95,7 +95,7 @@ describe("write tools", () => {
   it("runs only approved checks, with real exit codes, and caps runs", async () => {
     expect(await call("run_check", { check: "test" })).toMatch(/npm test → exit 1/);
     await expect(call("run_check", { check: "build" })).rejects.toThrow(/not approved/);
-    for (let i = 0; i < 5; i++) await call("run_check", { check: "test" });
+    for (let i = 0; i < EXECUTOR_LIMITS.maxCheckRuns - 1; i++) await call("run_check", { check: "test" });
     await expect(call("run_check", { check: "test" })).rejects.toThrow(/limit/);
     expect(session.checkRuns.every((r) => r.status === "failed" && r.exitCode === 1)).toBe(true);
   });

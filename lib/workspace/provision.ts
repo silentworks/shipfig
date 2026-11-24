@@ -125,7 +125,8 @@ export async function provisionWorkspace(input: ProvisionInput, deps: ProvisionD
 
   const run = async (step: SetupStep, argv: string[], opts: { cwd?: string; timeoutMs?: number } = {}, hint = "See the command output in the job log") => {
     const result = await sandbox.run(argv, { cwd: opts.cwd ?? WORKSPACE_ROOT, timeoutMs: opts.timeoutMs });
-    deps.log("command", `$ ${argv.join(" ")} → ${result.timedOut ? "timed out" : `exit ${result.exitCode}`} (${(result.durationMs / 1000).toFixed(1)}s)`, {
+    const retried = result.retries ? `, retried ${result.retries}× after a Sprites container error` : "";
+    deps.log("command", `$ ${argv.join(" ")} → ${result.timedOut ? "timed out" : `exit ${result.exitCode}`} (${(result.durationMs / 1000).toFixed(1)}s${retried})`, {
       exitCode: result.exitCode,
       durationMs: result.durationMs,
       stderr: result.exitCode === 0 ? undefined : result.stderr.slice(-2000),
