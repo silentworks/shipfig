@@ -143,6 +143,9 @@ describe("runner: provisioning stage", () => {
       createSandbox: vi.fn(async () => sandbox),
       openSandbox: vi.fn(async () => sandbox),
       destroySandbox: vi.fn(async () => true),
+      publish: vi.fn(async () => {
+        throw new Error("publish not expected in this test");
+      }),
     };
   });
 

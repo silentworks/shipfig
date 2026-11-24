@@ -8,7 +8,9 @@
  * can inspect real source; no edits happen until the plan is approved.
  *
  * with `failed` and `canceled` as explicit terminal states, a bounded repair
- * loop (testing → editing) and a bounded retry (failed → queued).
+ * loop (testing → editing) and a bounded retry (failed → queued). A failed
+ * publish can resume publishing (failed → publishing) from its saved bundle,
+ * without redoing the approved work.
  */
 
 export const JOB_STATES = [
@@ -55,7 +57,7 @@ export const TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
   // No cancel once publishing has started: it must finish or fail, never half-publish silently.
   publishing: ["completed", "failed"],
   completed: [],
-  failed: ["queued"],
+  failed: ["queued", "publishing"],
   canceled: [],
 };
 
@@ -95,6 +97,8 @@ export type CancelReason = "user_canceled" | "plan_rejected" | "publish_rejected
 export interface TransitionContext {
   retryCount: number;
   attempt: number;
+  /** A failed publish whose approved file bundle was saved, so publishing can resume. */
+  canResumePublish?: boolean;
 }
 
 /** Returns an error message if the transition is illegal, otherwise null. */
@@ -104,6 +108,9 @@ export function checkTransition(from: JobState, to: JobState, ctx: TransitionCon
   }
   if (from === "testing" && to === "editing" && ctx.retryCount >= MAX_REPAIR_ATTEMPTS) {
     return `Repair limit reached (${MAX_REPAIR_ATTEMPTS} attempts)`;
+  }
+  if (from === "failed" && to === "publishing" && !ctx.canResumePublish) {
+    return "Only a failed publish with a saved, approved bundle can resume publishing";
   }
   if (from === "failed" && to === "queued" && ctx.attempt >= MAX_ATTEMPTS) {
     return `Retry limit reached (${MAX_ATTEMPTS} attempts)`;

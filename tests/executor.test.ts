@@ -134,6 +134,9 @@ describe("runner: editing, testing and repairs", () => {
       createSandbox: vi.fn(async () => repo),
       openSandbox: vi.fn(async () => repo),
       destroySandbox: vi.fn(async () => true),
+      publish: vi.fn(async () => {
+        throw new Error("publish not expected in this test");
+      }),
     };
   }
 

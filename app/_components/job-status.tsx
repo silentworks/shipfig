@@ -7,13 +7,14 @@ import type { Job, JobEvent } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
 import { EvidenceView } from "./evidence-view";
 import { PlanView } from "./plan-view";
+import { PublishView } from "./publish-view";
 import { Button, ErrorNotice, Loading, Muted, Panel } from "./ui";
 
 const POLL_MS = 2000;
 
 /**
- * Minimal job status view: state, issue reference, event log, cancel/retry.
- * The full dashboard (plan, diff, evidence, approvals) is SIL-535.
+ * Job status view: state, issue reference, plan and publish approvals,
+ * evidence, event log, cancel/retry. The full dashboard is SIL-535.
  */
 export function JobStatus({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null);
@@ -65,6 +66,22 @@ export function JobStatus({ id }: { id: string }) {
     }
   }
 
+  async function decidePublish(decision: "approve" | "reject", acknowledgeUnverified: boolean) {
+    if (!job) return;
+    setBusy(true);
+    try {
+      await fetchJson(`/api/jobs/${id}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ decision, version: job.version, diffHash: job.diffHash ?? undefined, acknowledgeUnverified }),
+      });
+      setRefresh((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function decide(decision: "approve" | "reject") {
     if (!job) return;
     setBusy(true);
@@ -82,6 +99,7 @@ export function JobStatus({ id }: { id: string }) {
 
   const canCancel = !isTerminal(job.state) && job.state !== "publishing";
   const canRetry = job.state === "failed";
+  const resumesPublish = canRetry && job.failureReason === "publish_error" && job.hasPublishBundle;
 
   return (
     <div className="flex flex-col gap-4">
@@ -92,7 +110,7 @@ export function JobStatus({ id }: { id: string }) {
           <div className="flex gap-2">
             {canRetry && (
               <Button variant="secondary" onClick={() => act("retry")} disabled={busy}>
-                Retry
+                {resumesPublish ? "Retry publish" : "Retry"}
               </Button>
             )}
             {canCancel && (
@@ -153,6 +171,16 @@ export function JobStatus({ id }: { id: string }) {
               </dd>
             </>
           )}
+          {job.prUrl && (
+            <>
+              <dt className="text-zinc-500">Pull request</dt>
+              <dd>
+                <a href={job.prUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                  {job.prUrl}
+                </a>
+              </dd>
+            </>
+          )}
           {job.error && (
             <>
               <dt className="text-zinc-500">Error</dt>
@@ -164,6 +192,7 @@ export function JobStatus({ id }: { id: string }) {
       </Panel>
       <PlanView job={job} busy={busy} onDecision={decide} />
       <EvidenceView job={job} />
+      <PublishView job={job} busy={busy} onDecision={decidePublish} />
       <Panel title="Events">
         {events.length === 0 ? (
           <Muted>No events yet.</Muted>

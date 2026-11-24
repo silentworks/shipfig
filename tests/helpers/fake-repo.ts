@@ -1,8 +1,15 @@
+import { createHash } from "node:crypto";
 import type { CommandResult } from "@/lib/sprites/sandbox";
 import { FakeSandbox } from "./fake-sandbox";
 
 export const ROOT = "/home/sprite/shipfig/repo";
 export const SHA = "0123456789abcdef0123456789abcdef01234567";
+
+/** The git blob id of some content (what `git hash-object` prints). */
+export function gitBlobSha(content: string): string {
+  const bytes = Buffer.from(content);
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
 
 /**
  * A stateful fake checkout: serves reads, records writes, and answers
@@ -27,6 +34,14 @@ export class FakeRepo extends FakeSandbox {
     this.current[path.slice(ROOT.length + 1)] = content;
   }
 
+  /** File modes for `git diff --raw` (default 100644). */
+  readonly modes: Record<string, string> = {};
+
+  /** Like the real sha256 of the diff: changes whenever the changed content changes. */
+  diffHash(): string {
+    return createHash("sha256").update(JSON.stringify(this.changed().map((f) => [f, this.current[f] ?? null]))).digest("hex");
+  }
+
   changed(): string[] {
     const all = new Set([...Object.keys(this.original), ...Object.keys(this.current)]);
     return [...all].filter((f) => this.original[f] !== this.current[f]).sort();
@@ -49,10 +64,16 @@ export class FakeRepo extends FakeSandbox {
     if (cmd === "git" && args[0] === "status") {
       return { stdout: this.changed().map((f) => `${f in this.original ? " M" : "??"} ${f}\0`).join("") };
     }
-    if (cmd === "sha256sum") return { stdout: `${"ab".repeat(32)}  ${args.at(-1)}\n` };
+    if (cmd === "sha256sum") return { stdout: `${this.diffHash()}  ${args.at(-1)}\n` };
+    if (cmd === "stat") return { stdout: `${Buffer.byteLength(this.current[args.at(-1)!] ?? "")}\n` };
+    if (cmd === "base64") return { stdout: Buffer.from(this.current[args.at(-1)!] ?? "").toString("base64") };
+    if (cmd === "git" && args[0] === "hash-object") return { stdout: `${gitBlobSha(this.current[args.at(-1)!] ?? "")}\n` };
     if (cmd === "git" && args[0] === "diff") {
       const files = this.changed();
       const status = (f: string) => (!(f in this.original) ? "A" : !(f in this.current) ? "D" : "M");
+      if (args.includes("--raw")) {
+        return { stdout: files.map((f) => `:${f in this.original ? "100644" : "000000"} ${f in this.current ? (this.modes[f] ?? "100644") : "000000"} ${"0".repeat(40)} ${"0".repeat(40)} ${status(f)}\0${f}\0`).join("") };
+      }
       if (args.includes("--numstat")) return { stdout: files.map((f) => `${(this.current[f] ?? "").split("\n").length}\t1\t${f}\0`).join("") };
       if (args.includes("--name-status")) return { stdout: files.map((f) => `${status(f)}\0${f}\0`).join("") };
       if (args.some((a) => a.startsWith("--output="))) return { stdout: "" };

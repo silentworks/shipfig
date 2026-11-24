@@ -185,6 +185,9 @@ describe("runner: planning and approval", () => {
       createSandbox: vi.fn(async () => routedSandbox(base, sandbox)),
       openSandbox: vi.fn(async () => routedSandbox(base, sandbox)),
       destroySandbox: vi.fn(async () => true),
+      publish: vi.fn(async () => {
+        throw new Error("publish not expected in this test");
+      }),
     };
   }
 

@@ -77,6 +77,15 @@ const MIGRATIONS: string[] = [
   ALTER TABLE jobs ADD COLUMN verification TEXT;
   ALTER TABLE jobs ADD COLUMN diff_hash TEXT;
   `,
+  // v6 (SIL-534): publish approval bound to the diff hash, the exact file
+  // bundle being published (kept so a failed publish can resume), and the result.
+  `
+  ALTER TABLE jobs ADD COLUMN publish_approved_at TEXT;
+  ALTER TABLE jobs ADD COLUMN publish_approved_by TEXT;
+  ALTER TABLE jobs ADD COLUMN publish_approved_hash TEXT;
+  ALTER TABLE jobs ADD COLUMN publish_bundle TEXT;
+  ALTER TABLE jobs ADD COLUMN publish_result TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

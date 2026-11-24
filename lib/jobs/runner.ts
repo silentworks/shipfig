@@ -7,6 +7,9 @@ import { changedFiles, runChecks } from "@/lib/verify/checks";
 import { type Verification, captureDiff, evidenceFlags, missingCheckResults, secretsInPatch, verificationOutcome } from "@/lib/verify/evidence";
 import { reviewChanges } from "@/lib/verify/review";
 import { getAllowedIssue, getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
+import { PublishConflictError, publishBundleToGitHub } from "@/lib/github/publish";
+import { BundleError, collectBundle } from "@/lib/publish/bundle";
+import { commitMessage, pullRequestBody, pullRequestTitle } from "@/lib/publish/pr-body";
 import type { Issue } from "@/lib/github/schemas";
 import { redact } from "@/lib/redact";
 import { type Sandbox, createJobSandbox, destroyJobSandbox, openJobSandbox } from "@/lib/sprites/sandbox";
@@ -33,6 +36,8 @@ export interface RunnerDeps {
   createSandbox(name: string): Promise<Sandbox>;
   openSandbox(name: string): Promise<Sandbox | undefined>;
   destroySandbox(name: string): Promise<boolean>;
+  /** Writes the approved bundle to GitHub (branch + draft PR) via the trusted gateway. */
+  publish: typeof publishBundleToGitHub;
 }
 
 export interface StageContext {
@@ -292,11 +297,80 @@ stages.testing = async (job, ctx) => {
     });
     return;
   }
+  // Freeze the exact change now, bound to the diff hash the human will approve,
+  // so publishing never depends on this sprite still being reachable.
+  let publishBundle;
+  try {
+    publishBundle = await collectBundle(sandbox, root, { diffHash: diff.hash, baseSha: job.baseSha!, baseBranch: job.baseBranch!, branchName: job.branchName! });
+  } catch (error) {
+    if (!(error instanceof BundleError)) throw error;
+    store.transition(job.id, "failed", {
+      expectedState: "testing",
+      patch: { ...evidence, verification: verification(review, reviewError), failureReason: "policy_violation", error: `This change cannot be published: ${error.message}` },
+    });
+    return;
+  }
   const label = outcome === "verified" ? `all ${ran.length} check(s) passed` : ran.length > 0 ? `checks passed, but ${plan.missingChecks.join(", ")} could not run` : "no checks could run";
   store.transition(job.id, "awaiting_publish_approval", {
     expectedState: "testing",
     message: `${outcome === "verified" ? "Verified" : "Unverified"}: ${label}; ${diff.files.length} file(s), +${diff.additions}/-${diff.deletions}`,
-    patch: { ...evidence, verification: verification(review, reviewError) },
+    patch: { ...evidence, verification: verification(review, reviewError), publishBundle },
+  });
+};
+
+/**
+ * publishing (SIL-534): only after an approval, loaded from the job record,
+ * of the exact recorded diff. The change was frozen into a bundle at
+ * verification time (same diff hash), so this needs no sprite; it is written
+ * to GitHub through the trusted gateway as a branch and a draft PR.
+ */
+stages.publishing = async (job, ctx) => {
+  const { store } = ctx.deps;
+  if (!job.diffHash || !job.publishApprovedAt || job.publishApprovedHash !== job.diffHash) {
+    throw new StageError("policy_violation", "Publishing requires an approval of the exact recorded diff");
+  }
+  const outcome = job.verification?.outcome;
+  if (outcome !== "verified" && outcome !== "unverified") throw new StageError("policy_violation", "Only a change whose checks passed can be published");
+  if (!job.baseSha || !job.baseBranch || !job.branchName) throw new StageError("publish_error", "The job has no pinned base commit or branch");
+  const plan = approvedPlan(job);
+  const ref = { owner: job.repoOwner, repo: job.repoName };
+
+  let bundle = store.publishBundle(job.id);
+  if (!bundle) {
+    // Jobs verified before bundles were frozen at verification time.
+    if (!job.workspace) throw new StageError("setup_error", "Job has no workspace");
+    const sandbox = await ctx.sandbox();
+    try {
+      bundle = await collectBundle(sandbox, job.workspace.root, { diffHash: job.diffHash, baseSha: job.baseSha, baseBranch: job.baseBranch, branchName: job.branchName });
+    } catch (error) {
+      if (error instanceof BundleError) throw new StageError("policy_violation", error.message);
+      throw error;
+    }
+    store.savePublishBundle(job.id, bundle);
+    ctx.log("info", `Saved the approved change for publishing: ${bundle.files.length} file(s), diff ${bundle.diffHash.slice(0, 12)}`);
+  } else {
+    ctx.log("info", `Publishing the verified change (${bundle.files.length} file(s), diff ${bundle.diffHash.slice(0, 12)})`);
+  }
+  if (bundle.diffHash !== job.publishApprovedHash) throw new StageError("policy_violation", "The saved change does not match the approved diff");
+
+  let result;
+  try {
+    await ctx.deps.getAllowedRepo(ref);
+    result = await ctx.deps.publish(
+      ref,
+      bundle,
+      ({ baseMoved }) => ({ title: pullRequestTitle(job), body: pullRequestBody(job, plan, { baseMoved }), commitMessage: commitMessage(job, plan) }),
+      { log: (message) => ctx.log("info", message) },
+    );
+  } catch (error) {
+    const message = redact((error as Error).message);
+    const hint = error instanceof PublishConflictError ? "" : " Retry to resume from the saved change; nothing will be duplicated.";
+    throw new StageError("publish_error", `Publishing failed: ${message}.${hint}`);
+  }
+  store.transition(job.id, "completed", {
+    expectedState: "publishing",
+    message: `${result.reused.pullRequest ? "Reused" : "Opened"} ${result.draft ? "draft " : ""}PR #${result.prNumber}: ${result.prUrl}`,
+    patch: { prUrl: result.prUrl, publishResult: result },
   });
 };
 
@@ -315,6 +389,7 @@ export function defaultRunnerDeps(): RunnerDeps {
     createSandbox: createJobSandbox,
     openSandbox: openJobSandbox,
     destroySandbox: destroyJobSandbox,
+    publish: publishBundleToGitHub,
   };
 }
 

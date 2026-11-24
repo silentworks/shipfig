@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { sanitizeOutput } from "@/lib/redact";
+import type { PublishBundle, PublishResult } from "@/lib/publish/types";
 import type { Verification } from "@/lib/verify/evidence";
 import { type IssueRef, issueRefSchema } from "@/lib/validation";
 import { database } from "./db";
@@ -87,6 +88,13 @@ export interface Job {
   execution: ExecutionAttempt[];
   diff: string | null;
   prUrl: string | null;
+  /** Publish approval: who approved, when, and the exact diff hash they approved. */
+  publishApprovedAt: string | null;
+  publishApprovedBy: string | null;
+  publishApprovedHash: string | null;
+  /** Whether the approved file bundle has been saved (its content is not exposed on the job). */
+  hasPublishBundle: boolean;
+  publishResult: PublishResult | null;
   retryCount: number;
   attempt: number;
   version: number;
@@ -150,6 +158,12 @@ export interface JobPatch {
   diffHash?: string;
   diff?: string;
   prUrl?: string;
+  publishApprovedAt?: string;
+  publishApprovedBy?: string;
+  publishApprovedHash?: string;
+  publishResult?: PublishResult;
+  /** The exact change to publish, frozen at verification time. Stored verbatim. */
+  publishBundle?: PublishBundle;
   error?: string;
   failureReason?: FailureReason;
   cancelReason?: CancelReason;
@@ -217,6 +231,11 @@ function rowToJob(row: Row): Job {
     diffHash: (row.diff_hash as string | null) ?? null,
     diff: (row.diff as string | null) ?? null,
     prUrl: (row.pr_url as string | null) ?? null,
+    publishApprovedAt: (row.publish_approved_at as string | null) ?? null,
+    publishApprovedBy: (row.publish_approved_by as string | null) ?? null,
+    publishApprovedHash: (row.publish_approved_hash as string | null) ?? null,
+    hasPublishBundle: typeof row.publish_bundle === "string",
+    publishResult: parseJson<PublishResult | null>(row.publish_result, null),
     retryCount: Number(row.retry_count),
     attempt: Number(row.attempt),
     version: Number(row.version),
@@ -397,7 +416,8 @@ export class JobStore {
         if (options.expectedVersion !== undefined && job.version !== options.expectedVersion) {
           throw new InvalidTransitionError(`Job ${id} was modified concurrently (version ${job.version} ≠ ${options.expectedVersion})`);
         }
-        const problem = checkTransition(job.state, to, { retryCount: job.retryCount, attempt: job.attempt });
+        const canResumePublish = job.failureReason === "publish_error" && job.hasPublishBundle && job.publishApprovedHash === job.diffHash;
+        const problem = checkTransition(job.state, to, { retryCount: job.retryCount, attempt: job.attempt, canResumePublish });
         if (problem) throw new InvalidTransitionError(problem);
 
         const patch = options.patch ?? {};
@@ -423,6 +443,7 @@ export class JobStore {
         if (isRetry) {
           sets.push("attempt = attempt + 1", "retry_count = 0", "failure_reason = NULL", "error = NULL");
         }
+        if (job.state === "failed" && to === "publishing") sets.push("failure_reason = NULL", "error = NULL");
         const set = (column: string, value: string | number | null) => {
           sets.push(`${column} = ?`);
           values.push(value);
@@ -450,6 +471,19 @@ export class JobStore {
         }
         if (patch.diff !== undefined) set("diff", sanitizeOutput(patch.diff, MAX_DIFF_CHARS));
         if (patch.prUrl !== undefined) set("pr_url", patch.prUrl);
+        if (patch.publishApprovedAt !== undefined) set("publish_approved_at", patch.publishApprovedAt);
+        if (patch.publishApprovedBy !== undefined) set("publish_approved_by", patch.publishApprovedBy.slice(0, 200));
+        if (patch.publishApprovedHash !== undefined) {
+          if (!/^[0-9a-f]{64}$/.test(patch.publishApprovedHash)) throw new InvalidTransitionError("publishApprovedHash must be a sha256 hex digest");
+          set("publish_approved_hash", patch.publishApprovedHash);
+        }
+        if (patch.publishResult !== undefined) set("publish_result", JSON.stringify(patch.publishResult));
+        if (patch.publishBundle !== undefined) {
+          if (patch.diffHash !== undefined && patch.publishBundle.diffHash !== patch.diffHash) {
+            throw new InvalidTransitionError("The publish bundle does not match the recorded diff");
+          }
+          set("publish_bundle", JSON.stringify(patch.publishBundle));
+        }
         if (patch.error !== undefined) set("error", sanitizeOutput(patch.error, MAX_ERROR_CHARS));
         if (patch.failureReason !== undefined) set("failure_reason", patch.failureReason);
         if (patch.cancelReason !== undefined) set("cancel_reason", patch.cancelReason);
@@ -513,8 +547,70 @@ export class JobStore {
     });
   }
 
-  /** Re-queue a failed job (bounded by MAX_ATTEMPTS and the one-active-job rule). */
+  /**
+   * Approve publishing the exact diff the user reviewed. The diff hash must
+   * match the one Shipfig recorded, checks must not have failed, and a change
+   * with missing checks ("unverified") needs an explicit acknowledgement.
+   */
+  approvePublish(
+    id: string,
+    input: { expectedVersion: number; diffHash: string; approvedBy: string; acknowledgeUnverified?: boolean },
+    now = new Date(),
+  ): Job {
+    const job = this.get(id);
+    if (job.state !== "awaiting_publish_approval") throw new InvalidTransitionError(`Job ${id} is ${job.state}, not awaiting publish approval`);
+    if (!job.diffHash || input.diffHash !== job.diffHash) {
+      throw new InvalidTransitionError("The approved diff does not match the diff Shipfig recorded; reload the job and review it again");
+    }
+    const outcome = job.verification?.outcome;
+    if (outcome !== "verified" && outcome !== "unverified") throw new InvalidTransitionError("Only a change whose checks passed can be published");
+    if (outcome === "unverified" && !input.acknowledgeUnverified) {
+      throw new InvalidTransitionError("Some requested checks could not run; acknowledge that the change is unverified to publish it");
+    }
+    return this.transition(id, "publishing", {
+      expectedState: "awaiting_publish_approval",
+      expectedVersion: input.expectedVersion,
+      message: `Publishing approved by ${input.approvedBy} for diff ${input.diffHash.slice(0, 12)}${outcome === "unverified" ? " (unverified, acknowledged)" : ""}`,
+      patch: { publishApprovedAt: now.toISOString(), publishApprovedBy: input.approvedBy, publishApprovedHash: input.diffHash },
+      now,
+    });
+  }
+
+  rejectPublish(id: string, expectedVersion: number, now = new Date()): Job {
+    return this.transition(id, "canceled", {
+      expectedState: "awaiting_publish_approval",
+      expectedVersion,
+      message: "Publishing rejected",
+      patch: { cancelReason: "publish_rejected" },
+      now,
+    });
+  }
+
+  /** The saved publish bundle, if any. Kept off the Job object: it holds file contents. */
+  publishBundle(id: string): PublishBundle | null {
+    const row = this.db.prepare("SELECT publish_bundle FROM jobs WHERE id = ?").get(id) as { publish_bundle: string | null } | undefined;
+    if (!row) throw new JobNotFoundError(id);
+    return parseJson<PublishBundle | null>(row.publish_bundle, null);
+  }
+
+  /** Save the bundle while publishing (jobs verified before bundles were frozen at verification). Stored verbatim. */
+  savePublishBundle(id: string, bundle: PublishBundle, now = new Date()): void {
+    const result = this.db
+      .prepare("UPDATE jobs SET publish_bundle = ?, updated_at = ? WHERE id = ? AND state = 'publishing' AND publish_approved_hash = ?")
+      .run(JSON.stringify(bundle), now.toISOString(), id, bundle.diffHash);
+    if (result.changes !== 1) throw new InvalidTransitionError(`Job ${id} is not publishing the approved diff ${bundle.diffHash.slice(0, 12)}`);
+  }
+
+  /**
+   * Retry a failed job. A failed publish with a saved bundle resumes
+   * publishing (same approved diff); anything else re-queues the whole job
+   * (bounded by MAX_ATTEMPTS and the one-active-job rule).
+   */
   retry(id: string, now = new Date()): Job {
+    const job = this.get(id);
+    if (job.state === "failed" && job.failureReason === "publish_error" && job.hasPublishBundle) {
+      return this.transition(id, "publishing", { expectedState: "failed", message: "Retrying publish of the approved diff", now });
+    }
     return this.transition(id, "queued", { expectedState: "failed", message: "Retry requested", now });
   }
 

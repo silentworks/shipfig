@@ -28,6 +28,8 @@ describe("output summaries", () => {
     ["src/a.ts(1,1): error TS2322\nFound 2 errors in 1 file.", "Found 2 errors in 1 file."],
     ["✖ 3 problems (3 errors, 0 warnings)", "✖ 3 problems (3 errors, 0 warnings)"],
     ["\x1b[32mbuilt in 2s\x1b[0m\n", "built in 2s"],
+    ["npm notice run shipfig-demo@0.1.0 typecheck\nnpm notice run tsc", "no output"],
+    ["> app@1.0.0 build\n> next build\n\n✓ Compiled\nnpm notice run next build", "✓ Compiled"],
   ])("%j → %s", (output, expected) => {
     expect(summarizeOutput(output)).toBe(expected);
   });
@@ -113,6 +115,9 @@ describe("runner: verification evidence", () => {
       createSandbox: vi.fn(async () => repo),
       openSandbox: vi.fn(async () => repo),
       destroySandbox: vi.fn(async () => true),
+      publish: vi.fn(async () => {
+        throw new Error("publish not expected in this test");
+      }),
     };
   }
   async function run(steps: Step[]): Promise<{ done: Job; model: FakeModel }> {
@@ -135,7 +140,7 @@ describe("runner: verification evidence", () => {
     expect(done.baselineResults).toMatchObject([{ name: "test", status: "failed", exitCode: 1, summary: "1 failed | 1 passed (2)" }]);
     expect(done.testResults).toMatchObject([{ name: "test", status: "passed", exitCode: 0, summary: "2 passed (2)" }]);
     expect(done.testResults[0].durationMs).toEqual(expect.any(Number));
-    expect(done.diffHash).toBe("ab".repeat(32));
+    expect(done.diffHash).toBe(repo.diffHash());
     expect(done.verification).toMatchObject({
       outcome: "verified",
       regressionTestChanged: true,

@@ -92,6 +92,25 @@ them return `503 not_configured`, and the error names the missing variable.
   deletions, weakened tests and pre-existing failures. A change that adds a
   secret is refused. A model review of the real diff and results can block a
   change but never approve one.
+- `lib/publish/*` and `lib/github/publish.ts`: publishing, only after a human
+  approves the exact diff (`POST /api/jobs/:id/publish` with the diff hash;
+  the server refuses a mismatched hash or failed checks, and needs an explicit
+  acknowledgement for an unverified change). At verification, right after
+  recording the diff hash, Shipfig freezes the exact change into a bundle
+  (contents, modes, git blob ids, re-checked against that hash), so
+  publishing never depends on the job sprite still being reachable. A change
+  that cannot be published (protected files, symlinks, oversized files) fails
+  there, before anyone is asked to approve it. Publishing then creates blobs, a
+  tree on the pinned base commit, a commit, the `shipfig/issue-<n>-<job>`
+  branch and a draft PR through the trusted gateway sprite, using the Git
+  database API (the connector does not authorize `git push`). GitHub's blob
+  ids must match the hashes computed in the sprite. Retries reuse an existing
+  identical branch and the existing PR, so nothing is duplicated, and a failed
+  publish can be retried from the saved bundle.
+  Nothing is force-pushed, deleted or merged. The PR body lists the issue
+  link, summary, changed files, the exact commands with exit codes and output
+  tails, missing checks and risks. Issue and model text is rendered inert
+  (no @-mentions, HTML or cross-repo references).
 - `lib/jobs/runner.ts`: drives a job through its automated states
   (queued → provisioning → planning …) until it needs a human, and deletes the
   sprite once the job ends.
