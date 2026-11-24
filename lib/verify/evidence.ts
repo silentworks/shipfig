@@ -76,8 +76,10 @@ export function summarizeOutput(output: string): string {
     const m = pattern.exec(text);
     if (m) return m.slice(1).filter(Boolean).join(", ").trim().slice(0, 200);
   }
-  const last = text.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
-  return (last ?? "(no output)").slice(0, 200);
+  // npm's own lines ("npm notice run tsc", "> pkg@1.0.0 test") are not the tool's output.
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const own = lines.filter((l) => !/^(npm (notice|warn|info)\b|> )/.test(l) && l !== "--- stderr ---");
+  return (own.at(-1) ?? (lines.length > 0 ? "no output" : "(no output)")).slice(0, 200);
 }
 
 /** Results entries for requested checks that have no script: explicit "not run". */

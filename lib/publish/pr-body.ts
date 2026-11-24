@@ -13,18 +13,33 @@ import type { Job, TestResult } from "@/lib/jobs/store";
 const MAX_BODY_CHARS = 60_000;
 const MAX_OUTPUT_LINES = 30;
 
-/** Plain text safe to place in Markdown prose. */
+function inertProse(text: string): string {
+  return (
+    text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      // Break @-mentions and cross-repo references (owner/repo#1) without changing what a reader sees.
+      .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b")
+      .replace(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(?=\d)/g, "$1\u200b#")
+  );
+}
+
+/**
+ * Plain text safe to place in Markdown prose. Inline code spans are kept
+ * verbatim: GitHub renders them literally (no HTML, mentions or references),
+ * so escaping inside them would show the escapes.
+ */
 export function inert(text: string, max = 2_000): string {
-  const cleaned = text
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    // Break @-mentions and cross-repo references (owner/repo#1) without changing what a reader sees.
-    .replace(/@(?=[A-Za-z0-9_-])/g, "@​")
-    .replace(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(?=\d)/g, "$1​#")
-    .trim();
-  return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
+  const cleaned = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+  let out = "";
+  let last = 0;
+  for (const m of cleaned.matchAll(/(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g)) {
+    out += inertProse(cleaned.slice(last, m.index)) + m[0];
+    last = m.index + m[0].length;
+  }
+  out += inertProse(cleaned.slice(last));
+  return out.length > max ? `${out.slice(0, max - 1)}…` : out;
 }
 
 /** One-line variant for list items and table cells. */

@@ -28,6 +28,8 @@ describe("output summaries", () => {
     ["src/a.ts(1,1): error TS2322\nFound 2 errors in 1 file.", "Found 2 errors in 1 file."],
     ["✖ 3 problems (3 errors, 0 warnings)", "✖ 3 problems (3 errors, 0 warnings)"],
     ["\x1b[32mbuilt in 2s\x1b[0m\n", "built in 2s"],
+    ["npm notice run shipfig-demo@0.1.0 typecheck\nnpm notice run tsc", "no output"],
+    ["> app@1.0.0 build\n> next build\n\n✓ Compiled\nnpm notice run next build", "✓ Compiled"],
   ])("%j → %s", (output, expected) => {
     expect(summarizeOutput(output)).toBe(expected);
   });

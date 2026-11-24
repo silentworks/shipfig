@@ -223,6 +223,9 @@ describe("collectBundle", () => {
 describe("PR text", () => {
   it("neutralises mentions, HTML and cross-repo references in untrusted text", () => {
     expect(inert("ping @octocat <img src=x> see other/repo#12 & #3")).toBe("ping @​octocat &lt;img src=x&gt; see other/repo​#12 &amp; #3");
+    // Code spans are rendered literally by GitHub, so they are left untouched.
+    expect(inert("change `page <= totalPages` to `page < n` for @bob")).toBe("change `page <= totalPages` to `page < n` for @​bob");
+    expect(inert("``a `b` <c>`` <d>")).toBe("``a `b` <c>`` &lt;d&gt;");
   });
 
   it("fences output so it cannot break out of its code block", () => {
