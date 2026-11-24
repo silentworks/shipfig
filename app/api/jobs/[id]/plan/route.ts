@@ -1,3 +1,4 @@
+import { guardAction } from "@/lib/auth";
 import { after } from "next/server";
 import { z } from "zod";
 import { errorResponse, jsonError } from "@/lib/http";
@@ -17,6 +18,8 @@ const decisionSchema = z.strictObject({
  * approver is recorded as the local operator.
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/plan">) {
+  const denied = guardAction(request);
+  if (denied) return denied;
   try {
     const id = jobIdSchema.parse((await ctx.params).id);
     let body: unknown;

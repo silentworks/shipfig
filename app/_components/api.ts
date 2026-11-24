@@ -16,7 +16,13 @@ export class ApiError extends Error {
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
-    headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
+    headers: {
+      Accept: "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      // State-changing requests must say so (checked server-side against cross-site requests).
+      ...(init?.method && init.method !== "GET" ? { "X-Shipfig-Action": "1" } : {}),
+      ...init?.headers,
+    },
     cache: "no-store",
   });
   const body = (await response.json().catch(() => null)) as

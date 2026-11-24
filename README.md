@@ -31,6 +31,7 @@ npm run dev                         # http://localhost:3000
 | `ANTHROPIC_API_KEY` | no | Anthropic key. If unset, the SDK uses `ANTHROPIC_AUTH_TOKEN` or an `ant auth login` profile. Server-side only. |
 | `SHIPFIG_ANTHROPIC_MODEL` | no (`claude-opus-5-5`) | Claude model. |
 | `SHIPFIG_ANTHROPIC_EFFORT` | no (`high`) | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. |
+| `SHIPFIG_OPERATOR_TOKEN` | in production | At least 16 characters. When set, every page and API request needs it: the browser prompts (any username, the token as password), or send `Authorization: Bearer <token>`. In production Shipfig refuses to serve without it. |
 | `SHIPFIG_GATEWAY_SPRITE` | no (`shipfig-gateway`) | Trusted sprite that makes GitHub calls. |
 | `SHIPFIG_ALLOWED_REPOS` | no | Comma-separated `owner/repo` allowlist. |
 | `SHIPFIG_DB_PATH` | no (`.data/shipfig.db`) | SQLite job database. |
@@ -126,6 +127,10 @@ them return `503 not_configured`, and the error names the missing variable.
   when recorded) and the exact diff with its sha256. It polls every 2s while
   Shipfig works, every 6s while it waits for you, and not in a hidden tab.
   `app/jobs`: job history, including failed and canceled jobs.
+
+Every guardrail (access control, path and write policy, redaction, limits,
+failure handling and restart recovery) is listed with its file and tests in
+[docs/guardrails.md](docs/guardrails.md).
 
 Treat issue text and repository content as untrusted. They are rendered only
 as plain text, and every owner, repo, issue number, path and branch value is

@@ -1,3 +1,4 @@
+import { guardAction } from "@/lib/auth";
 import { after, connection } from "next/server";
 import { z } from "zod";
 import { getAllowedIssue } from "@/lib/github/connector";
@@ -30,6 +31,8 @@ const createJobSchema = z.strictObject({
  * GitHub so the stored snapshot cannot be spoofed.
  */
 export async function POST(request: Request) {
+  const denied = guardAction(request);
+  if (denied) return denied;
   try {
     let body: unknown;
     try {

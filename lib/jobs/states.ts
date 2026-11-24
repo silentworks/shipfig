@@ -91,7 +91,9 @@ export type FailureReason =
   | "repair_limit"
   | "agent_error"
   | "sprite_error"
-  | "publish_error";
+  | "publish_error"
+  /** The server restarted while the job was editing or testing; the workspace may be half-changed. */
+  | "interrupted";
 export type CancelReason = "user_canceled" | "plan_rejected" | "publish_rejected";
 
 export interface TransitionContext {
