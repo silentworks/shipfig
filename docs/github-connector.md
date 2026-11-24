@@ -112,7 +112,7 @@ return 403, the fallback is a fork-based PR or a fine-grained token via an
 
 ```bash
 cp .env.example .env.local   # fill SPRITES_TOKEN; add a GitHub connector in the Sprites dashboard
-npm run connector -- list    # copy the conn_... id into SHIPFIG_GITHUB_CONNECTION_ID
+npm run connector -- list    # copy the id (first column) into SHIPFIG_GITHUB_CONNECTION_ID
 npm run connector -- apply-policy
 npm run spike -- <owner>/<public-repo> <issue-number>
 ```

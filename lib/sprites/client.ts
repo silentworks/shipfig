@@ -1,5 +1,5 @@
 import { APIError, SpritesClient, type Sprite } from "@fly/sprites";
-import { serverEnv } from "@/lib/env";
+import { spritesEnv } from "@/lib/env";
 import { spriteNameSchema } from "@/lib/validation";
 
 let client: SpritesClient | undefined;
@@ -7,7 +7,7 @@ let client: SpritesClient | undefined;
 /** Shared Sprites API client. The token never leaves the orchestrator process. */
 export function spritesClient(): SpritesClient {
   if (!client) {
-    const env = serverEnv();
+    const env = spritesEnv();
     client = new SpritesClient(env.SPRITES_TOKEN, { baseURL: env.SPRITES_API_URL, timeout: 30_000 });
   }
   return client;

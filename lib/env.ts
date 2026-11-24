@@ -18,7 +18,7 @@ const serverEnvSchema = z.object({
   SHIPFIG_GITHUB_CONNECTION_ID: z
     .string({
       error:
-        "SHIPFIG_GITHUB_CONNECTION_ID is required (the GitHub connector id, e.g. conn_abc123; run `npm run connector -- list`)",
+        "SHIPFIG_GITHUB_CONNECTION_ID is required (the GitHub connector id: run `npm run connector -- list` and copy the first column)",
     })
     .regex(/^[A-Za-z0-9_-]{1,128}$/, "SHIPFIG_GITHUB_CONNECTION_ID has an invalid format"),
   SHIPFIG_GATEWAY_SPRITE: z
@@ -66,4 +66,18 @@ let cached: ServerEnv | undefined;
 export function serverEnv(): ServerEnv {
   cached ??= parseServerEnv(process.env);
   return cached;
+}
+
+const spritesEnvSchema = serverEnvSchema.pick({ SPRITES_TOKEN: true, SPRITES_API_URL: true });
+export type SpritesEnv = z.infer<typeof spritesEnvSchema>;
+
+/**
+ * Just the Sprites API credentials. Used by the Sprites client and connector
+ * management, which must work before a GitHub connector id is configured
+ * (e.g. `npm run connector -- list`, the way you find that id).
+ */
+export function spritesEnv(): SpritesEnv {
+  const result = spritesEnvSchema.safeParse(process.env);
+  if (!result.success) throw new EnvError(result.error.issues.map((i) => i.message));
+  return result.data;
 }

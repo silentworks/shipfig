@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { serverEnv } from "@/lib/env";
+import { spritesEnv } from "@/lib/env";
 import { redact } from "@/lib/redact";
 
 /**
@@ -37,7 +37,7 @@ export const connectionSchema = z
 export type Connection = z.infer<typeof connectionSchema>;
 
 async function managementRequest(path: string, init: RequestInit = {}): Promise<unknown> {
-  const env = serverEnv();
+  const env = spritesEnv();
   const response = await fetch(`${env.SPRITES_API_URL}${path}`, {
     ...init,
     headers: {
