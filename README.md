@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Shipfig
 
-## Getting Started
+An autonomous software maintenance agent. You pick a GitHub issue. Shipfig
+plans a fix, runs it in an isolated [Fly.io Sprite](https://sprites.dev),
+verifies it, and opens a draft pull request only after you approve.
 
-First, run the development server:
+## Requirements
+
+- Node.js 24 or later. `@fly/sprites` and the built-in `node:sqlite` both need it.
+- A Sprites account and token.
+- A GitHub connector added in the Sprites dashboard (Connectors → Add connector → GitHub).
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local          # fill in SPRITES_TOKEN
+npm run connector -- list           # copy the id (first column) into SHIPFIG_GITHUB_CONNECTION_ID
+npm run connector -- apply-policy   # restrict the connector to the gateway sprite
+npm run spike -- <owner>/<repo> <issue-number>   # verify Sprites + connector end to end
+npm run dev                         # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SPRITES_TOKEN` | yes | Sprites API token. Server-side only; never sent to any sprite. |
+| `SHIPFIG_GITHUB_CONNECTION_ID` | yes | GitHub connector id used in gateway URLs. |
+| `SHIPFIG_GATEWAY_SPRITE` | no (`shipfig-gateway`) | Trusted sprite that makes GitHub calls. |
+| `SHIPFIG_ALLOWED_REPOS` | no | Comma-separated `owner/repo` allowlist. |
+| `SHIPFIG_DB_PATH` | no (`.data/shipfig.db`) | SQLite job database. |
+| `SPRITES_API_URL` | no | Override the Sprites API base URL. |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Without the required variables the app still starts. API routes that need
+them return `503 not_configured`, and the error names the missing variable.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Commands
 
-## Learn More
+| Command | What it does |
+| --- | --- |
+| `npm run dev` / `build` / `start` | Next.js |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | Generate route types, then `tsc --noEmit` |
+| `npm test` | Vitest unit tests |
+| `npm run spike -- owner/repo N` | Live Sprites + GitHub connector proof (SIL-527) |
+| `npm run connector -- list\|show\|apply-policy` | Inspect or restrict the GitHub connector |
 
-To learn more about Next.js, take a look at the following resources:
+## How it fits together
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `lib/sprites/gateway.ts`: GitHub API calls go through the Sprites connector
+  gateway, which accepts calls only from inside a sprite. They run as `curl` in
+  one trusted gateway sprite, so the GitHub token never reaches any sprite or
+  log. See [docs/github-connector.md](docs/github-connector.md).
+- `lib/github/connector.ts`: typed repo and issue operations with allowlist and
+  eligibility checks (public and non-archived only, for the MVP).
+- `lib/jobs/*`: durable SQLite job store and guarded state machine. It enforces
+  one active job, bounded repairs and retries, per-state timeouts, and
+  redacted events and evidence.
+- `app/api/*`: route handlers for repos, issues and jobs.
+- `app/page.tsx`: repo and issue picker. `app/jobs/[id]`: job status.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Treat issue text and repository content as untrusted. They are rendered only
+as plain text, and every owner, repo, issue number, path and branch value is
+validated before use (`lib/validation.ts`).

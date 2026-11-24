@@ -3,6 +3,7 @@ import { EnvError } from "@/lib/env";
 import { GatewayError } from "@/lib/sprites/gateway";
 import { ActiveJobExistsError, InvalidTransitionError, JobNotFoundError } from "@/lib/jobs/store";
 import { redact } from "@/lib/redact";
+import { RepoNotAllowedError } from "@/lib/github/connector";
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
@@ -23,6 +24,7 @@ export function errorResponse(error: unknown): Response {
     return jsonError(409, "active_job_exists", error.message, { activeJobId: error.activeJobId });
   }
   if (error instanceof InvalidTransitionError) return jsonError(409, "invalid_transition", error.message);
+  if (error instanceof RepoNotAllowedError) return jsonError(403, "repo_not_allowed", error.message);
   if (error instanceof EnvError) return jsonError(503, "not_configured", error.message);
   if (error instanceof GatewayError) {
     const status = error.kind === "not_found" ? 404 : error.kind === "rate_limited" ? 429 : error.kind === "policy" ? 400 : 502;
