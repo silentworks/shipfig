@@ -16,6 +16,7 @@ import { type Sandbox, createJobSandbox, destroyJobSandbox, openJobSandbox } fro
 import { type ProvisionDeps, SetupError, provisionWorkspace } from "@/lib/workspace/provision";
 import type { FailureReason, JobState } from "./states";
 import { MAX_REPAIR_ATTEMPTS, isTerminal } from "./states";
+import { classifyStageError, tidyMessage } from "./errors";
 import { InvalidTransitionError, type Job, type JobStore, type TestResult, jobStore } from "./store";
 
 /**
@@ -436,8 +437,9 @@ export async function runJob(jobId: string, deps: RunnerDeps = defaultRunnerDeps
       await stage(job, ctx);
     } catch (error) {
       if (error instanceof InvalidTransitionError) continue; // canceled/expired meanwhile: re-read
-      const reason: FailureReason = error instanceof StageError ? error.reason : "error";
-      const message = redact(error instanceof Error ? error.message : String(error));
+      const classified = error instanceof StageError ? { reason: error.reason, message: tidyMessage(error.message) } : classifyStageError(error);
+      const reason: FailureReason = classified.reason;
+      const message = classified.message;
       try {
         deps.store.fail(jobId, message, reason);
       } catch (failError) {

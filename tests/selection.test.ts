@@ -132,7 +132,7 @@ describe("issues", () => {
 
 describe("POST /api/jobs", () => {
   const post = (body: unknown) =>
-    jobsRoute.POST(new Request("http://localhost/api/jobs", { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body) }));
+    jobsRoute.POST(new Request("http://localhost/api/jobs", { method: "POST", headers: { "X-Shipfig-Action": "1" }, body: typeof body === "string" ? body : JSON.stringify(body) }));
 
   beforeEach(() => {
     const active = jobStore().activeJob();
