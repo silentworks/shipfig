@@ -321,13 +321,26 @@ describe("runner: publishing", () => {
     expect(gh.calls).toEqual([]);
   });
 
-  it("refuses to publish if the workspace changed after approval", async () => {
+  it("publishes the change frozen at verification, without needing the sprite", async () => {
     const ready = await toPublishApproval();
+    expect(ready.hasPublishBundle).toBe(true);
+    expect(store.publishBundle(ready.id)!.diffHash).toBe(ready.diffHash);
     store.approvePublish(ready.id, { expectedVersion: ready.version, diffHash: ready.diffHash!, approvedBy: "local operator" });
+
+    // The sprite went cold/away and its workspace changed: neither matters now.
     repo!.current["src/sum.ts"] = "tampered\n";
+    repo = undefined;
     const done = await runJob(ready.id, d);
-    expect(done).toMatchObject({ state: "failed", failureReason: "policy_violation" });
-    expect(done.error).toMatch(/no longer matches the approved diff/);
+    expect(done.state).toBe("completed");
+    const tree = gh.branchTree(done.branchName!).tree;
+    expect(gh.blobs.get(tree.find((e) => e.path === "src/sum.ts")!.sha!)).toBe("export const sum = (a: number, b: number) => a + b;\n");
+  });
+
+  it("a change that cannot be published fails at verification, before anyone is asked to approve it", async () => {
+    repo!.modes["src/sum.ts"] = "120000";
+    const failed = await toPublishApproval();
+    expect(failed).toMatchObject({ state: "failed", failureReason: "policy_violation", hasPublishBundle: false });
+    expect(failed.error).toMatch(/cannot be published: .*mode 120000/);
     expect(gh.calls).toEqual([]);
   });
 

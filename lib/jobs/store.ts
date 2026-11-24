@@ -162,6 +162,8 @@ export interface JobPatch {
   publishApprovedBy?: string;
   publishApprovedHash?: string;
   publishResult?: PublishResult;
+  /** The exact change to publish, frozen at verification time. Stored verbatim. */
+  publishBundle?: PublishBundle;
   error?: string;
   failureReason?: FailureReason;
   cancelReason?: CancelReason;
@@ -476,6 +478,12 @@ export class JobStore {
           set("publish_approved_hash", patch.publishApprovedHash);
         }
         if (patch.publishResult !== undefined) set("publish_result", JSON.stringify(patch.publishResult));
+        if (patch.publishBundle !== undefined) {
+          if (patch.diffHash !== undefined && patch.publishBundle.diffHash !== patch.diffHash) {
+            throw new InvalidTransitionError("The publish bundle does not match the recorded diff");
+          }
+          set("publish_bundle", JSON.stringify(patch.publishBundle));
+        }
         if (patch.error !== undefined) set("error", sanitizeOutput(patch.error, MAX_ERROR_CHARS));
         if (patch.failureReason !== undefined) set("failure_reason", patch.failureReason);
         if (patch.cancelReason !== undefined) set("cancel_reason", patch.cancelReason);
@@ -585,7 +593,7 @@ export class JobStore {
     return parseJson<PublishBundle | null>(row.publish_bundle, null);
   }
 
-  /** Save the approved bundle while publishing, before any GitHub write. Stored verbatim: it must stay byte-exact. */
+  /** Save the bundle while publishing (jobs verified before bundles were frozen at verification). Stored verbatim. */
   savePublishBundle(id: string, bundle: PublishBundle, now = new Date()): void {
     const result = this.db
       .prepare("UPDATE jobs SET publish_bundle = ?, updated_at = ? WHERE id = ? AND state = 'publishing' AND publish_approved_hash = ?")

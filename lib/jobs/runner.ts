@@ -297,19 +297,32 @@ stages.testing = async (job, ctx) => {
     });
     return;
   }
+  // Freeze the exact change now, bound to the diff hash the human will approve,
+  // so publishing never depends on this sprite still being reachable.
+  let publishBundle;
+  try {
+    publishBundle = await collectBundle(sandbox, root, { diffHash: diff.hash, baseSha: job.baseSha!, baseBranch: job.baseBranch!, branchName: job.branchName! });
+  } catch (error) {
+    if (!(error instanceof BundleError)) throw error;
+    store.transition(job.id, "failed", {
+      expectedState: "testing",
+      patch: { ...evidence, verification: verification(review, reviewError), failureReason: "policy_violation", error: `This change cannot be published: ${error.message}` },
+    });
+    return;
+  }
   const label = outcome === "verified" ? `all ${ran.length} check(s) passed` : ran.length > 0 ? `checks passed, but ${plan.missingChecks.join(", ")} could not run` : "no checks could run";
   store.transition(job.id, "awaiting_publish_approval", {
     expectedState: "testing",
     message: `${outcome === "verified" ? "Verified" : "Unverified"}: ${label}; ${diff.files.length} file(s), +${diff.additions}/-${diff.deletions}`,
-    patch: { ...evidence, verification: verification(review, reviewError) },
+    patch: { ...evidence, verification: verification(review, reviewError), publishBundle },
   });
 };
 
 /**
  * publishing (SIL-534): only after an approval, loaded from the job record,
- * of the exact recorded diff. The change is taken out of the workspace and
- * saved first (so a failed publish can resume without the sprite), then
- * written to GitHub through the trusted gateway as a branch and a draft PR.
+ * of the exact recorded diff. The change was frozen into a bundle at
+ * verification time (same diff hash), so this needs no sprite; it is written
+ * to GitHub through the trusted gateway as a branch and a draft PR.
  */
 stages.publishing = async (job, ctx) => {
   const { store } = ctx.deps;
@@ -324,6 +337,7 @@ stages.publishing = async (job, ctx) => {
 
   let bundle = store.publishBundle(job.id);
   if (!bundle) {
+    // Jobs verified before bundles were frozen at verification time.
     if (!job.workspace) throw new StageError("setup_error", "Job has no workspace");
     const sandbox = await ctx.sandbox();
     try {
@@ -335,7 +349,7 @@ stages.publishing = async (job, ctx) => {
     store.savePublishBundle(job.id, bundle);
     ctx.log("info", `Saved the approved change for publishing: ${bundle.files.length} file(s), diff ${bundle.diffHash.slice(0, 12)}`);
   } else {
-    ctx.log("info", `Resuming publish from the saved change (${bundle.files.length} file(s), diff ${bundle.diffHash.slice(0, 12)})`);
+    ctx.log("info", `Publishing the verified change (${bundle.files.length} file(s), diff ${bundle.diffHash.slice(0, 12)})`);
   }
   if (bundle.diffHash !== job.publishApprovedHash) throw new StageError("policy_violation", "The saved change does not match the approved diff");
 
