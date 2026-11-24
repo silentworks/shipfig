@@ -1,0 +1,442 @@
+import { randomBytes } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import { sanitizeOutput } from "@/lib/redact";
+import { type IssueRef, issueRefSchema } from "@/lib/validation";
+import { database } from "./db";
+import {
+  type CancelReason,
+  type FailureReason,
+  type JobState,
+  STATE_TIMEOUT_MS,
+  checkTransition,
+  isJobState,
+  isTerminal,
+} from "./states";
+
+export type TestStatus = "passed" | "failed" | "timed_out" | "not_run";
+
+/** Evidence for one verification command. `passed` only if it actually ran and exited 0. */
+export interface TestResult {
+  name: string;
+  command: string[];
+  status: TestStatus;
+  exitCode: number | null;
+  durationMs: number | null;
+  output: string;
+}
+
+export interface Job {
+  id: string;
+  repoOwner: string;
+  repoName: string;
+  issueNumber: number;
+  issueTitle: string;
+  issueUrl: string;
+  state: JobState;
+  failureReason: FailureReason | null;
+  cancelReason: CancelReason | null;
+  error: string | null;
+  spriteName: string | null;
+  branchName: string | null;
+  plan: unknown;
+  testResults: TestResult[];
+  diff: string | null;
+  prUrl: string | null;
+  retryCount: number;
+  attempt: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  stateEnteredAt: string;
+  deadlineAt: string | null;
+  finishedAt: string | null;
+}
+
+export type JobEventKind = "transition" | "info" | "command" | "error";
+
+export interface JobEvent {
+  id: number;
+  jobId: string;
+  at: string;
+  kind: JobEventKind;
+  fromState: JobState | null;
+  toState: JobState | null;
+  message: string;
+  data: unknown;
+}
+
+export class JobNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Job ${id} not found`);
+    this.name = "JobNotFoundError";
+  }
+}
+
+export class InvalidTransitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidTransitionError";
+  }
+}
+
+export class ActiveJobExistsError extends Error {
+  constructor(public readonly activeJobId: string) {
+    super(`Another job (${activeJobId}) is already active; only one job may run at a time`);
+    this.name = "ActiveJobExistsError";
+  }
+}
+
+/** Fields a transition may set alongside the state change. */
+export interface JobPatch {
+  spriteName?: string;
+  branchName?: string;
+  plan?: unknown;
+  testResults?: TestResult[];
+  diff?: string;
+  prUrl?: string;
+  error?: string;
+  failureReason?: FailureReason;
+  cancelReason?: CancelReason;
+}
+
+export interface TransitionOptions {
+  /** Reject if the job is not currently in this state (guards against stale callers). */
+  expectedState?: JobState;
+  /** Reject if the job's version changed (optimistic concurrency). */
+  expectedVersion?: number;
+  message?: string;
+  patch?: JobPatch;
+  now?: Date;
+}
+
+export interface NewJobInput extends IssueRef {
+  issueTitle: string;
+  issueUrl: string;
+}
+
+type Row = Record<string, string | number | null>;
+
+const MAX_DIFF_CHARS = 200_000;
+const MAX_EVENT_CHARS = 8_000;
+const MAX_ERROR_CHARS = 4_000;
+
+function parseJson<T>(value: string | number | null, fallback: T): T {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function rowToJob(row: Row): Job {
+  const state = String(row.state);
+  if (!isJobState(state)) throw new Error(`Corrupt job row: unknown state ${state}`);
+  return {
+    id: String(row.id),
+    repoOwner: String(row.repo_owner),
+    repoName: String(row.repo_name),
+    issueNumber: Number(row.issue_number),
+    issueTitle: String(row.issue_title),
+    issueUrl: String(row.issue_url),
+    state,
+    failureReason: (row.failure_reason as FailureReason | null) ?? null,
+    cancelReason: (row.cancel_reason as CancelReason | null) ?? null,
+    error: (row.error as string | null) ?? null,
+    spriteName: (row.sprite_name as string | null) ?? null,
+    branchName: (row.branch_name as string | null) ?? null,
+    plan: parseJson(row.plan, null),
+    testResults: parseJson<TestResult[]>(row.test_results, []),
+    diff: (row.diff as string | null) ?? null,
+    prUrl: (row.pr_url as string | null) ?? null,
+    retryCount: Number(row.retry_count),
+    attempt: Number(row.attempt),
+    version: Number(row.version),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    stateEnteredAt: String(row.state_entered_at),
+    deadlineAt: (row.deadline_at as string | null) ?? null,
+    finishedAt: (row.finished_at as string | null) ?? null,
+  };
+}
+
+function rowToEvent(row: Row): JobEvent {
+  return {
+    id: Number(row.id),
+    jobId: String(row.job_id),
+    at: String(row.at),
+    kind: row.kind as JobEventKind,
+    fromState: (row.from_state as JobState | null) ?? null,
+    toState: (row.to_state as JobState | null) ?? null,
+    message: String(row.message),
+    data: parseJson(row.data, null),
+  };
+}
+
+function deadlineFor(state: JobState, now: Date): string | null {
+  const ms = STATE_TIMEOUT_MS[state];
+  return ms === null ? null : new Date(now.getTime() + ms).toISOString();
+}
+
+function sanitizeTestResults(results: TestResult[]): TestResult[] {
+  return results.map((r) => ({
+    ...r,
+    // Never record "passed" without a real zero exit code.
+    status: r.status === "passed" && r.exitCode !== 0 ? "failed" : r.status,
+    output: sanitizeOutput(r.output, 8_000),
+  }));
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE constraint failed: jobs\.active/.test(error.message);
+}
+
+export function newJobId(): string {
+  return randomBytes(6).toString("hex");
+}
+
+export function spriteNameForJob(jobId: string): string {
+  return `shipfig-job-${jobId}`;
+}
+
+export class JobStore {
+  constructor(private readonly db: DatabaseSync) {}
+
+  private tx<T>(fn: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private insertEvent(
+    jobId: string,
+    at: string,
+    kind: JobEventKind,
+    message: string,
+    opts: { from?: JobState | null; to?: JobState | null; data?: unknown } = {},
+  ): void {
+    this.db
+      .prepare("INSERT INTO job_events (job_id, at, kind, from_state, to_state, message, data) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(
+        jobId,
+        at,
+        kind,
+        opts.from ?? null,
+        opts.to ?? null,
+        sanitizeOutput(message, MAX_EVENT_CHARS),
+        opts.data === undefined ? null : sanitizeOutput(JSON.stringify(opts.data), MAX_EVENT_CHARS),
+      );
+  }
+
+  /** The current non-terminal job, if any. */
+  activeJob(): Job | undefined {
+    const row = this.db.prepare("SELECT * FROM jobs WHERE active = 1").get() as Row | undefined;
+    return row ? rowToJob(row) : undefined;
+  }
+
+  /**
+   * Create a queued job for an explicitly selected issue. Rejects if another
+   * job is active (checked in the transaction and enforced by a unique index,
+   * so concurrent starts cannot both succeed).
+   */
+  create(input: NewJobInput, now = new Date()): Job {
+    const ref = issueRefSchema.parse(input);
+    const id = newJobId();
+    const at = now.toISOString();
+    try {
+      this.tx(() => {
+        const active = this.activeJob();
+        if (active) throw new ActiveJobExistsError(active.id);
+        this.db
+          .prepare(
+            `INSERT INTO jobs (id, repo_owner, repo_name, issue_number, issue_title, issue_url, state, active,
+               sprite_name, created_at, updated_at, state_entered_at, deadline_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            ref.owner,
+            ref.repo,
+            ref.issueNumber,
+            sanitizeOutput(input.issueTitle, 500),
+            input.issueUrl,
+            spriteNameForJob(id),
+            at,
+            at,
+            at,
+            deadlineFor("queued", now),
+          );
+        this.insertEvent(id, at, "transition", `Job created for ${ref.owner}/${ref.repo}#${ref.issueNumber}`, { to: "queued" });
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const active = this.activeJob();
+        throw new ActiveJobExistsError(active?.id ?? "unknown");
+      }
+      throw error;
+    }
+    return this.get(id);
+  }
+
+  find(id: string): Job | undefined {
+    const row = this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Row | undefined;
+    return row ? rowToJob(row) : undefined;
+  }
+
+  get(id: string): Job {
+    const job = this.find(id);
+    if (!job) throw new JobNotFoundError(id);
+    return job;
+  }
+
+  list(limit = 50): Job[] {
+    const rows = this.db.prepare("SELECT * FROM jobs ORDER BY created_at DESC, id LIMIT ?").all(limit) as Row[];
+    return rows.map(rowToJob);
+  }
+
+  events(jobId: string, afterId = 0): JobEvent[] {
+    const rows = this.db
+      .prepare("SELECT * FROM job_events WHERE job_id = ? AND id > ? ORDER BY id")
+      .all(jobId, afterId) as Row[];
+    return rows.map(rowToEvent);
+  }
+
+  /** Append a non-transition event (sanitized). */
+  log(jobId: string, kind: Exclude<JobEventKind, "transition">, message: string, data?: unknown, now = new Date()): void {
+    this.get(jobId);
+    this.insertEvent(jobId, now.toISOString(), kind, message, { data });
+  }
+
+  /**
+   * Move a job to a new state, enforcing the transition table, guards and
+   * optimistic concurrency. All writes for the change happen in one transaction.
+   */
+  transition(id: string, to: JobState, options: TransitionOptions = {}): Job {
+    const now = options.now ?? new Date();
+    const at = now.toISOString();
+    try {
+      this.tx(() => {
+        const job = this.get(id);
+        if (options.expectedState && job.state !== options.expectedState) {
+          throw new InvalidTransitionError(`Job ${id} is ${job.state}, expected ${options.expectedState}`);
+        }
+        if (options.expectedVersion !== undefined && job.version !== options.expectedVersion) {
+          throw new InvalidTransitionError(`Job ${id} was modified concurrently (version ${job.version} ≠ ${options.expectedVersion})`);
+        }
+        const problem = checkTransition(job.state, to, { retryCount: job.retryCount, attempt: job.attempt });
+        if (problem) throw new InvalidTransitionError(problem);
+
+        const patch = options.patch ?? {};
+        const isRepair = job.state === "testing" && to === "editing";
+        const isRetry = job.state === "failed" && to === "queued";
+        const terminal = isTerminal(to);
+
+        if (to === "failed" && !patch.failureReason) patch.failureReason = "error";
+        if (to === "canceled" && !patch.cancelReason) patch.cancelReason = "user_canceled";
+
+        const sets: string[] = [
+          "state = ?",
+          "active = ?",
+          "version = version + 1",
+          "updated_at = ?",
+          "state_entered_at = ?",
+          "deadline_at = ?",
+          "finished_at = ?",
+        ];
+        const values: (string | number | null)[] = [to, terminal ? null : 1, at, at, deadlineFor(to, now), terminal ? at : null];
+
+        if (isRepair) sets.push("retry_count = retry_count + 1");
+        if (isRetry) {
+          sets.push("attempt = attempt + 1", "retry_count = 0", "failure_reason = NULL", "error = NULL");
+        }
+        const set = (column: string, value: string | number | null) => {
+          sets.push(`${column} = ?`);
+          values.push(value);
+        };
+        if (patch.spriteName !== undefined) set("sprite_name", patch.spriteName);
+        if (patch.branchName !== undefined) set("branch_name", patch.branchName);
+        if (patch.plan !== undefined) set("plan", JSON.stringify(patch.plan));
+        if (patch.testResults !== undefined) set("test_results", JSON.stringify(sanitizeTestResults(patch.testResults)));
+        if (patch.diff !== undefined) set("diff", sanitizeOutput(patch.diff, MAX_DIFF_CHARS));
+        if (patch.prUrl !== undefined) set("pr_url", patch.prUrl);
+        if (patch.error !== undefined) set("error", sanitizeOutput(patch.error, MAX_ERROR_CHARS));
+        if (patch.failureReason !== undefined) set("failure_reason", patch.failureReason);
+        if (patch.cancelReason !== undefined) set("cancel_reason", patch.cancelReason);
+
+        const result = this.db
+          .prepare(`UPDATE jobs SET ${sets.join(", ")} WHERE id = ? AND version = ?`)
+          .run(...values, id, job.version);
+        if (result.changes !== 1) throw new InvalidTransitionError(`Job ${id} was modified concurrently`);
+
+        const reason = to === "failed" ? ` (${patch.failureReason})` : to === "canceled" ? ` (${patch.cancelReason})` : "";
+        const message = options.message ?? `${job.state} → ${to}${reason}`;
+        this.insertEvent(id, at, "transition", message, {
+          from: job.state,
+          to,
+          data: patch.error ? { error: patch.error } : undefined,
+        });
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const active = this.activeJob();
+        throw new ActiveJobExistsError(active?.id ?? "unknown");
+      }
+      throw error;
+    }
+    return this.get(id);
+  }
+
+  cancel(id: string, reason: CancelReason = "user_canceled", now = new Date()): Job {
+    return this.transition(id, "canceled", { patch: { cancelReason: reason }, now });
+  }
+
+  fail(id: string, error: string, reason: FailureReason = "error", now = new Date()): Job {
+    return this.transition(id, "failed", { patch: { error, failureReason: reason }, now });
+  }
+
+  /** Re-queue a failed job (bounded by MAX_ATTEMPTS and the one-active-job rule). */
+  retry(id: string, now = new Date()): Job {
+    return this.transition(id, "queued", { expectedState: "failed", message: "Retry requested", now });
+  }
+
+  /**
+   * Fail every active job whose state deadline has passed. Called on reads and
+   * by the worker so timeouts are explicit even after a process restart.
+   */
+  expireTimedOut(now = new Date()): Job[] {
+    const rows = this.db
+      .prepare("SELECT * FROM jobs WHERE active = 1 AND deadline_at IS NOT NULL AND deadline_at <= ?")
+      .all(now.toISOString()) as Row[];
+    const expired: Job[] = [];
+    for (const row of rows) {
+      const job = rowToJob(row);
+      try {
+        expired.push(
+          this.transition(job.id, "failed", {
+            expectedVersion: job.version,
+            message: `Timed out in ${job.state} (deadline ${job.deadlineAt})`,
+            patch: { failureReason: "timeout", error: `Timed out while ${job.state}` },
+            now,
+          }),
+        );
+      } catch (error) {
+        if (!(error instanceof InvalidTransitionError)) throw error;
+        // Raced with a legitimate transition; leave it.
+      }
+    }
+    return expired;
+  }
+}
+
+let store: JobStore | undefined;
+
+export function jobStore(): JobStore {
+  store ??= new JobStore(database());
+  return store;
+}
