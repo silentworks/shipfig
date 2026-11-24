@@ -25,6 +25,8 @@ npm run dev                         # http://localhost:3000
 | --- | --- | --- |
 | `SPRITES_TOKEN` | yes | Sprites API token. Server-side only; never sent to any sprite. |
 | `SHIPFIG_GITHUB_CONNECTION_ID` | yes | GitHub connector id used in gateway URLs. |
+| `OPENAI_API_KEY` | yes, to run jobs | OpenAI key for planning, editing and review. Server-side only. |
+| `SHIPFIG_OPENAI_MODEL` | no (`gpt-5.5`) | Model used by the agent. |
 | `SHIPFIG_GATEWAY_SPRITE` | no (`shipfig-gateway`) | Trusted sprite that makes GitHub calls. |
 | `SHIPFIG_ALLOWED_REPOS` | no | Comma-separated `owner/repo` allowlist. |
 | `SHIPFIG_DB_PATH` | no (`.data/shipfig.db`) | SQLite job database. |
@@ -60,6 +62,13 @@ them return `503 not_configured`, and the error names the missing variable.
 - `lib/workspace/provision.ts`: pins the base branch head SHA, fetches exactly
   that commit anonymously, creates `shipfig/issue-<n>-<job>`, disables git
   hooks, runs `npm ci --ignore-scripts`, and checkpoints before any edit.
+- `lib/agent/*`: the agent. `loop.ts` is a bounded tool loop (schema-checked
+  arguments, turn and token limits, redacted tool output). `planner.ts` gives
+  the model read-only tools (`list_files`, `read_file`, `search_code`) over the
+  checkout and returns a structured plan. The server then checks the plan's
+  paths and checks against the real repo, and a human must approve it
+  (`POST /api/jobs/:id/plan`). Issue and repo text is fenced as untrusted data,
+  and secret files (`.env`, keys, `.npmrc` …) are never read.
 - `lib/jobs/runner.ts`: drives a job through its automated states
   (queued → provisioning → planning …) until it needs a human, and deletes the
   sprite once the job ends.

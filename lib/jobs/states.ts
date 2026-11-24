@@ -81,6 +81,7 @@ export type FailureReason =
   | "timeout"
   | "error"
   | "setup_error"
+  | "needs_clarification"
   | "checks_failed"
   | "repair_limit"
   | "agent_error"

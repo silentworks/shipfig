@@ -133,6 +133,13 @@ describe("runner: provisioning stage", () => {
       store,
       getAllowedRepo: vi.fn(async () => repo),
       getBranchHeadSha: vi.fn(async () => SHA),
+      // Planning is covered in planner.test.ts; stop the run right after provisioning.
+      getAllowedIssue: vi.fn(async () => {
+        throw new Error("planning not under test");
+      }),
+      model: () => {
+        throw new Error("unused");
+      },
       createSandbox: vi.fn(async () => sandbox),
       openSandbox: vi.fn(async () => sandbox),
       destroySandbox: vi.fn(async () => true),
@@ -145,7 +152,6 @@ describe("runner: provisioning stage", () => {
     const job = create();
     const done = await runJob(job.id, deps);
     expect(done).toMatchObject({
-      state: "planning",
       baseSha: SHA,
       baseBranch: "main",
       branchName: `shipfig/issue-7-${job.id}`,
@@ -155,6 +161,7 @@ describe("runner: provisioning stage", () => {
     expect(deps.createSandbox).toHaveBeenCalledWith(`shipfig-job-${job.id}`);
     const log = store.events(job.id).map((e) => e.message);
     expect(log).toContain("queued → provisioning");
+    expect(log.some((m) => /^Workspace ready on shipfig\/issue-7-.* \(checkpoint v2\)$/.test(m))).toBe(true);
     expect(log.some((m) => /^\$ npm ci .* → exit 0/.test(m))).toBe(true);
   });
 

@@ -1,4 +1,8 @@
-import { getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
+import { AgentLimitError, AgentOutputError, AgentStoppedError } from "@/lib/agent/loop";
+import { type AgentModel, agentModel } from "@/lib/agent/model";
+import { planIssue } from "@/lib/agent/planner";
+import { getAllowedIssue, getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
+import type { Issue } from "@/lib/github/schemas";
 import { redact } from "@/lib/redact";
 import { type Sandbox, createJobSandbox, destroyJobSandbox, openJobSandbox } from "@/lib/sprites/sandbox";
 import { type ProvisionDeps, SetupError, provisionWorkspace } from "@/lib/workspace/provision";
@@ -18,6 +22,9 @@ export interface RunnerDeps {
   store: JobStore;
   getAllowedRepo: ProvisionDeps["getAllowedRepo"];
   getBranchHeadSha: ProvisionDeps["getBranchHeadSha"];
+  getAllowedIssue(ref: { owner: string; repo: string; issueNumber: number }): Promise<Issue>;
+  /** Lazily resolved so a missing OPENAI_API_KEY only matters once planning starts. */
+  model(): AgentModel;
   createSandbox(name: string): Promise<Sandbox>;
   openSandbox(name: string): Promise<Sandbox | undefined>;
   destroySandbox(name: string): Promise<boolean>;
@@ -77,6 +84,58 @@ const stages: Partial<Record<JobState, Stage>> = {
   },
 };
 
+function agentFailure(error: unknown): never {
+  if (error instanceof AgentStoppedError) throw new InvalidTransitionError(error.message);
+  if (error instanceof AgentLimitError || error instanceof AgentOutputError) throw new StageError("agent_error", error.message);
+  throw error;
+}
+
+/** Stop agent loops as soon as the job leaves the state they belong to. */
+function stopUnless(store: JobStore, jobId: string, state: JobState) {
+  return () => {
+    const current = store.find(jobId)?.state;
+    return current === state ? null : `job is now ${current}`;
+  };
+}
+
+stages.planning = async (job, ctx) => {
+  const { store } = ctx.deps;
+  if (!job.workspace) throw new StageError("setup_error", "Job has no workspace; provisioning did not complete");
+  const sandbox = await ctx.sandbox();
+  // Re-fetch the issue server-side: the plan is based on its current text.
+  const issue = await ctx.deps.getAllowedIssue({ owner: job.repoOwner, repo: job.repoName, issueNumber: job.issueNumber });
+  if (issue.state !== "open") throw new StageError("error", `Issue #${issue.number} is ${issue.state}`);
+  const model = ctx.deps.model();
+  ctx.log("info", `Planning with ${model.name}`);
+  const record = await planIssue({
+    sandbox,
+    workspace: job.workspace,
+    issue,
+    repoSlug: `${job.repoOwner}/${job.repoName}`,
+    model,
+    onEvent: (e) => ctx.log("info", `planner ${e.kind === "tool_error" ? "error: " : ""}${e.message}`),
+    shouldStop: stopUnless(store, job.id, "planning"),
+  }).catch(agentFailure);
+
+  if (record.plan.needsClarification) {
+    store.transition(job.id, "failed", {
+      expectedState: "planning",
+      message: "Planner needs clarification before any change",
+      patch: {
+        plan: record,
+        failureReason: "needs_clarification",
+        error: `Needs clarification: ${record.plan.clarificationQuestion ?? "the issue is ambiguous or out of scope"}`,
+      },
+    });
+    return;
+  }
+  store.transition(job.id, "awaiting_plan_approval", {
+    expectedState: "planning",
+    message: `Plan ready: ${record.plan.files.length} file(s), checks ${record.runnableChecks.join(", ") || "none"}`,
+    patch: { plan: record },
+  });
+};
+
 /** Register (or replace) the stage for a state. Later milestones plug in here. */
 export function registerStage(state: JobState, stage: Stage): void {
   stages[state] = stage;
@@ -87,6 +146,8 @@ export function defaultRunnerDeps(): RunnerDeps {
     store: jobStore(),
     getAllowedRepo,
     getBranchHeadSha,
+    getAllowedIssue,
+    model: agentModel,
     createSandbox: createJobSandbox,
     openSandbox: openJobSandbox,
     destroySandbox: destroyJobSandbox,

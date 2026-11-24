@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { STATE_LABELS, isTerminal } from "@/lib/jobs/states";
 import type { Job, JobEvent } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
+import { PlanView } from "./plan-view";
 import { Button, ErrorNotice, Loading, Muted, Panel } from "./ui";
 
 const POLL_MS = 2000;
@@ -55,6 +56,19 @@ export function JobStatus({ id }: { id: string }) {
     setBusy(true);
     try {
       await fetchJson(`/api/jobs/${id}/${action}`, { method: "POST" });
+      setRefresh((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decide(decision: "approve" | "reject") {
+    if (!job) return;
+    setBusy(true);
+    try {
+      await fetchJson(`/api/jobs/${id}/plan`, { method: "POST", body: JSON.stringify({ decision, version: job.version }) });
       setRefresh((n) => n + 1);
     } catch (e) {
       setError((e as Error).message);
@@ -147,6 +161,7 @@ export function JobStatus({ id }: { id: string }) {
         </dl>
 
       </Panel>
+      <PlanView job={job} busy={busy} onDecision={decide} />
       <Panel title="Events">
         {events.length === 0 ? (
           <Muted>No events yet.</Muted>
