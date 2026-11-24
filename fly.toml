@@ -1,0 +1,39 @@
+# Shipfig on Fly.io (live at https://shipfig-silentworks.fly.dev). For your
+# own deployment, change `app` and `primary_region`, then see README "Deploy".
+app = "shipfig-silentworks"
+primary_region = "lhr"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  SHIPFIG_DB_PATH = "/data/shipfig.db"
+  SHIPFIG_AGENT_PROVIDER = "anthropic"
+  SHIPFIG_GATEWAY_SPRITE = "shipfig-gateway"
+  SHIPFIG_ALLOWED_REPOS = "silentworks/shipfig-demo"
+
+# Jobs run inside the server process and the database is SQLite on this
+# volume: keep exactly one machine, always on (a stopped machine would
+# strand a running job until restart recovery picks it up).
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
+
+[[mounts]]
+  source = "shipfig_data"
+  destination = "/data"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

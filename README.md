@@ -53,6 +53,34 @@ them return `503 not_configured`, and the error names the missing variable.
 | `npm run sandbox-tools-smoke` | Live check of the agent's file tools and policies on a scratch repo in a real sprite (SIL-532) |
 | `npm run workspace-smoke -- owner/repo` | Live job-workspace check: provision, prove isolation, run the repo's tests, delete (SIL-530) |
 
+## Architecture
+
+```text
+ Browser (operator token) ── Next.js app + in-process job runner ── SQLite (/data)
+                                    │
+           ┌────────────────────────┼─────────────────────────┐
+           ▼                        ▼                         ▼
+   Model API (Claude or     Job sprite (one per job)    Gateway sprite (trusted)
+   OpenAI): plan, edit,     clone pinned SHA, npm ci,   curl → Sprites connector
+   review                   edit, run checks, diff      → GitHub API (read, and
+                            no credentials; egress      write after approval)
+                            only github.com + npm
+                                    └──────── approved bundle ───────┘
+                                                     ▼
+                                            Draft PR on GitHub
+```
+
+The job sprite runs untrusted code and has no way to reach GitHub's write
+API. The gateway sprite never runs repository code. The approval, the diff
+hash and the published bundle all live server-side.
+
+## Demo
+
+[docs/demo.md](docs/demo.md) has the three-minute script, rehearsal steps
+and fallbacks. [docs/demo/walkthrough.mp4](docs/demo/walkthrough.mp4) is a
+54-second recording of real screens from the run that opened
+[silentworks/shipfig-demo#3](https://github.com/silentworks/shipfig-demo/pull/3).
+
 ## How it fits together
 
 - `lib/sprites/gateway.ts`: GitHub API calls go through the Sprites connector
@@ -135,3 +163,75 @@ failure handling and restart recovery) is listed with its file and tests in
 Treat issue text and repository content as untrusted. They are rendered only
 as plain text, and every owner, repo, issue number, path and branch value is
 validated before use (`lib/validation.ts`).
+
+## Deploy to Fly.io
+
+Shipfig runs as a single always-on machine: the job runner is in-process
+and jobs live in SQLite on a volume. `Dockerfile` builds the Next.js
+standalone server, and `fly.toml` holds the configuration.
+
+```bash
+fly auth login
+fly apps create <app-name>                  # then set `app` (and `primary_region`) in fly.toml
+fly volumes create shipfig_data --region <region> --size 1 -a <app-name>
+fly secrets set -a <app-name> \
+  SPRITES_TOKEN=... \
+  SHIPFIG_GITHUB_CONNECTION_ID=... \
+  ANTHROPIC_API_KEY=... \
+  SHIPFIG_OPERATOR_TOKEN=$(openssl rand -hex 24)
+fly deploy -a <app-name> --ha=false         # exactly one machine
+```
+
+- Set secret values bare. A value copied from `.env.local` with its quotes
+  keeps the quotes and fails authentication.
+- Non-secret settings (`SHIPFIG_AGENT_PROVIDER`, `SHIPFIG_ALLOWED_REPOS`,
+  `SHIPFIG_GATEWAY_SPRITE`) are in `fly.toml` `[env]`.
+- Open `https://<app-name>.fly.dev`. The browser asks for credentials: any
+  username, with the operator token as the password. Without
+  `SHIPFIG_OPERATOR_TOKEN`, a production server refuses every request.
+- The deployed app uses the same connector and gateway sprite as local
+  development. Restart recovery only cleans up sprites of its own jobs, so
+  both can share one Sprites account.
+- Check the image locally first:
+
+  ```bash
+  docker build -t shipfig .
+  docker run --rm -p 3000:3000 --env-file <unquoted env file> \
+    -e SHIPFIG_OPERATOR_TOKEN=<16+ chars> -v "$PWD/.data:/data" shipfig
+  ```
+
+## Known limitations
+
+- **One job at a time, one operator.** There are no user accounts, and
+  approvals are recorded as "local operator". The operator token is a single
+  shared secret.
+- **Single instance.** The runner is in-process and the database is SQLite,
+  so you can't scale out. Restart recovery resumes safe stages and stops jobs
+  that were mid-edit.
+- **npm projects in public repositories only.** Job sprites clone
+  anonymously, and only `test`, `lint`, `typecheck` and `build` npm scripts
+  can be run as checks. There is no yarn, pnpm or bun.
+- **Small, well-specified issues.** The agent is limited in turns, tokens,
+  files and write size. Large refactors, dependency upgrades and changes to
+  CI, deployment or lockfiles are refused by design.
+- **Regular files only.** The PR description is written once and is not
+  updated after publishing. Symlinks, submodules and files over 1 MB can't be
+  published.
+- **The model review can only block.** Correctness still rests on the
+  repository's own tests. A change can be "verified" against weak tests.
+
+## Next commercial steps
+
+1. **Accounts and teams.** Add GitHub OAuth sign-in, per-user approvals in
+   the audit trail, and roles for who can approve publishing.
+2. **Private repositories.** Clone through a short-lived, read-only token
+   that is scoped to one job and never stored in the sprite image.
+3. **Queue and workers.** Move to a durable queue and Postgres, run several
+   jobs at once, and keep sprites warm per repository for faster starts.
+4. **Triggers.** Start from GitHub labels or comments (`/shipfig fix`), and
+   post the plan back for approval in GitHub itself.
+5. **Broader ecosystems.** Add yarn, pnpm and bun, Python and Go projects,
+   and custom check commands defined in a repository config file.
+6. **Pricing.** Charge per verified PR, with usage limits per organisation.
+   Pilot with small SaaS teams on their dependency and maintenance backlog.
+
