@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // The Sprites SDK uses Node built-ins (WebSocket, crypto) and must not be bundled.
+  serverExternalPackages: ["@fly/sprites"],
   experimental: {
     agentFeedback: true,
   },
