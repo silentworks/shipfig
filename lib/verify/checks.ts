@@ -1,6 +1,7 @@
 import type { Check } from "@/lib/agent/planner";
 import type { TestResult } from "@/lib/jobs/store";
 import type { Sandbox } from "@/lib/sprites/sandbox";
+import { summarizeOutput } from "./evidence";
 
 /**
  * Run approved npm checks in the job sandbox. The result for each check is
@@ -31,6 +32,7 @@ export async function runCheck(sandbox: Sandbox, root: string, check: Check, tim
     exitCode: result.exitCode,
     durationMs: result.durationMs,
     output: tail(output),
+    summary: result.timedOut ? `timed out after ${Math.round(timeoutMs / 1000)}s` : summarizeOutput(output),
   };
 }
 

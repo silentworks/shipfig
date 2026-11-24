@@ -84,6 +84,7 @@ export type FailureReason =
   | "needs_clarification"
   | "policy_violation"
   | "no_changes"
+  | "review_failed"
   | "checks_failed"
   | "repair_limit"
   | "agent_error"

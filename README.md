@@ -78,6 +78,16 @@ them return `503 not_configured`, and the error names the missing variable.
   Shipfig then re-runs the checks itself; the executor's own report is never
   taken as evidence. Failed checks go back to editing at most twice, then the
   job fails with `repair_limit`, keeping the diff and output.
+- `lib/verify/*`: evidence. Approved checks run on the untouched checkout
+  first (baseline) and again after the change. Each records the command, real
+  exit code, duration and a one-line summary. Missing scripts are recorded as
+  `not_run`, never as passing. The outcome is `verified`, `unverified` or
+  `failed`, decided only from exit codes. The diff is captured with per-file
+  stats and a sha256 of the raw diff, computed inside the sprite, for the
+  publish guard. Server-side flags cover no regression test, unplanned files,
+  deletions, weakened tests and pre-existing failures. A change that adds a
+  secret is refused. A model review of the real diff and results can block a
+  change but never approve one.
 - `lib/jobs/runner.ts`: drives a job through its automated states
   (queued → provisioning → planning …) until it needs a human, and deletes the
   sprite once the job ends.

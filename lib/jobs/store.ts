@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { sanitizeOutput } from "@/lib/redact";
+import type { Verification } from "@/lib/verify/evidence";
 import { type IssueRef, issueRefSchema } from "@/lib/validation";
 import { database } from "./db";
 import {
@@ -23,6 +24,8 @@ export interface TestResult {
   exitCode: number | null;
   durationMs: number | null;
   output: string;
+  /** One-line summary of what the tool reported (e.g. "3 passed (3)"). */
+  summary?: string;
 }
 
 /** What provisioning found in the checkout; used by planning and verification. */
@@ -76,6 +79,11 @@ export interface Job {
   planApprovedAt: string | null;
   planApprovedBy: string | null;
   testResults: TestResult[];
+  /** Checks run on the untouched checkout before any edit. */
+  baselineResults: TestResult[];
+  verification: Verification | null;
+  /** sha256 of the raw diff the human reviews; publishing must match it (SIL-534). */
+  diffHash: string | null;
   execution: ExecutionAttempt[];
   diff: string | null;
   prUrl: string | null;
@@ -137,6 +145,9 @@ export interface JobPatch {
   planApprovedBy?: string;
   testResults?: TestResult[];
   execution?: ExecutionAttempt[];
+  baselineResults?: TestResult[];
+  verification?: Verification;
+  diffHash?: string;
   diff?: string;
   prUrl?: string;
   error?: string;
@@ -201,6 +212,9 @@ function rowToJob(row: Row): Job {
     planApprovedBy: (row.plan_approved_by as string | null) ?? null,
     testResults: parseJson<TestResult[]>(row.test_results, []),
     execution: parseJson<ExecutionAttempt[]>(row.execution, []),
+    baselineResults: parseJson<TestResult[]>(row.baseline_results, []),
+    verification: parseJson<Verification | null>(row.verification, null),
+    diffHash: (row.diff_hash as string | null) ?? null,
     diff: (row.diff as string | null) ?? null,
     prUrl: (row.pr_url as string | null) ?? null,
     retryCount: Number(row.retry_count),
@@ -428,6 +442,12 @@ export class JobStore {
         if (patch.planApprovedBy !== undefined) set("plan_approved_by", patch.planApprovedBy.slice(0, 200));
         if (patch.testResults !== undefined) set("test_results", JSON.stringify(sanitizeTestResults(patch.testResults)));
         if (patch.execution !== undefined) set("execution", sanitizeOutput(JSON.stringify(patch.execution), MAX_PLAN_CHARS * 2));
+        if (patch.baselineResults !== undefined) set("baseline_results", JSON.stringify(sanitizeTestResults(patch.baselineResults)));
+        if (patch.verification !== undefined) set("verification", sanitizeOutput(JSON.stringify(patch.verification), MAX_PLAN_CHARS));
+        if (patch.diffHash !== undefined) {
+          if (!/^[0-9a-f]{64}$/.test(patch.diffHash)) throw new InvalidTransitionError("diffHash must be a sha256 hex digest");
+          set("diff_hash", patch.diffHash);
+        }
         if (patch.diff !== undefined) set("diff", sanitizeOutput(patch.diff, MAX_DIFF_CHARS));
         if (patch.prUrl !== undefined) set("pr_url", patch.prUrl);
         if (patch.error !== undefined) set("error", sanitizeOutput(patch.error, MAX_ERROR_CHARS));
