@@ -113,6 +113,9 @@ describe("runner: verification evidence", () => {
       createSandbox: vi.fn(async () => repo),
       openSandbox: vi.fn(async () => repo),
       destroySandbox: vi.fn(async () => true),
+      publish: vi.fn(async () => {
+        throw new Error("publish not expected in this test");
+      }),
     };
   }
   async function run(steps: Step[]): Promise<{ done: Job; model: FakeModel }> {
@@ -135,7 +138,7 @@ describe("runner: verification evidence", () => {
     expect(done.baselineResults).toMatchObject([{ name: "test", status: "failed", exitCode: 1, summary: "1 failed | 1 passed (2)" }]);
     expect(done.testResults).toMatchObject([{ name: "test", status: "passed", exitCode: 0, summary: "2 passed (2)" }]);
     expect(done.testResults[0].durationMs).toEqual(expect.any(Number));
-    expect(done.diffHash).toBe("ab".repeat(32));
+    expect(done.diffHash).toBe(repo.diffHash());
     expect(done.verification).toMatchObject({
       outcome: "verified",
       regressionTestChanged: true,

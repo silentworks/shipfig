@@ -48,6 +48,7 @@ const allowedRoutes: ReadonlyArray<{ method: HttpMethod; pattern: RegExp; purpos
   { method: "POST", pattern: new RegExp(`^/repos/${SEG}/${SEG}/git/trees$`), purpose: "publish: create tree" },
   { method: "POST", pattern: new RegExp(`^/repos/${SEG}/${SEG}/git/commits$`), purpose: "publish: create commit" },
   { method: "POST", pattern: new RegExp(`^/repos/${SEG}/${SEG}/git/refs$`), purpose: "publish: create branch" },
+  { method: "GET", pattern: new RegExp(`^/repos/${SEG}/${SEG}/pulls$`), purpose: "publish: find an existing PR for the job branch" },
   { method: "POST", pattern: new RegExp(`^/repos/${SEG}/${SEG}/pulls$`), purpose: "publish: open draft PR" },
 ];
 
