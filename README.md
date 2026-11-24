@@ -25,8 +25,12 @@ npm run dev                         # http://localhost:3000
 | --- | --- | --- |
 | `SPRITES_TOKEN` | yes | Sprites API token. Server-side only; never sent to any sprite. |
 | `SHIPFIG_GITHUB_CONNECTION_ID` | yes | GitHub connector id used in gateway URLs. |
-| `OPENAI_API_KEY` | yes, to run jobs | OpenAI key for planning, editing and review. Server-side only. |
-| `SHIPFIG_OPENAI_MODEL` | no (`gpt-5.5`) | Model used by the agent. |
+| `SHIPFIG_AGENT_PROVIDER` | no (`openai`) | Model provider for planning, editing and review: `openai` or `anthropic`. |
+| `OPENAI_API_KEY` | with `openai` | OpenAI key. Server-side only. |
+| `SHIPFIG_OPENAI_MODEL` | no (`gpt-6.2-sol`) | OpenAI model. |
+| `ANTHROPIC_API_KEY` | no | Anthropic key. If unset, the SDK uses `ANTHROPIC_AUTH_TOKEN` or an `ant auth login` profile. Server-side only. |
+| `SHIPFIG_ANTHROPIC_MODEL` | no (`claude-opus-5-5`) | Claude model. |
+| `SHIPFIG_ANTHROPIC_EFFORT` | no (`high`) | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. |
 | `SHIPFIG_GATEWAY_SPRITE` | no (`shipfig-gateway`) | Trusted sprite that makes GitHub calls. |
 | `SHIPFIG_ALLOWED_REPOS` | no | Comma-separated `owner/repo` allowlist. |
 | `SHIPFIG_DB_PATH` | no (`.data/shipfig.db`) | SQLite job database. |
