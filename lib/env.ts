@@ -81,3 +81,21 @@ export function spritesEnv(): SpritesEnv {
   if (!result.success) throw new EnvError(result.error.issues.map((i) => i.message));
   return result.data;
 }
+
+const openaiEnvSchema = z.object({
+  OPENAI_API_KEY: z
+    .string({ error: "OPENAI_API_KEY is required for planning and editing (https://platform.openai.com/api-keys)" })
+    .min(1, "OPENAI_API_KEY is required"),
+  SHIPFIG_OPENAI_MODEL: z
+    .string()
+    .regex(/^[A-Za-z0-9._:-]{1,100}$/, "SHIPFIG_OPENAI_MODEL has an invalid format")
+    .default("gpt-5.5"),
+});
+export type OpenAIEnv = z.infer<typeof openaiEnvSchema>;
+
+/** OpenAI credentials, validated only when the agent actually runs. */
+export function openaiEnv(): OpenAIEnv {
+  const result = openaiEnvSchema.safeParse(process.env);
+  if (!result.success) throw new EnvError(result.error.issues.map((i) => i.message));
+  return result.data;
+}

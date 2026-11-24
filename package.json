@@ -17,6 +17,7 @@
   "dependencies": {
     "@fly/sprites": "^0.2.5",
     "next": "16.4.6",
+    "openai": "^7.63.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"

@@ -57,7 +57,10 @@ export interface Job {
   checkpointId: string | null;
   workspace: WorkspaceInfo | null;
   branchName: string | null;
+  /** PlanRecord from the planner (lib/agent/planner.ts). */
   plan: unknown;
+  planApprovedAt: string | null;
+  planApprovedBy: string | null;
   testResults: TestResult[];
   diff: string | null;
   prUrl: string | null;
@@ -115,6 +118,8 @@ export interface JobPatch {
   workspace?: WorkspaceInfo;
   branchName?: string;
   plan?: unknown;
+  planApprovedAt?: string;
+  planApprovedBy?: string;
   testResults?: TestResult[];
   diff?: string;
   prUrl?: string;
@@ -141,6 +146,7 @@ export interface NewJobInput extends IssueRef {
 type Row = Record<string, string | number | null>;
 
 const MAX_DIFF_CHARS = 200_000;
+const MAX_PLAN_CHARS = 60_000;
 const MAX_EVENT_CHARS = 8_000;
 const MAX_ERROR_CHARS = 4_000;
 
@@ -175,6 +181,8 @@ function rowToJob(row: Row): Job {
     workspace: parseJson<WorkspaceInfo | null>(row.workspace, null),
     branchName: (row.branch_name as string | null) ?? null,
     plan: parseJson(row.plan, null),
+    planApprovedAt: (row.plan_approved_at as string | null) ?? null,
+    planApprovedBy: (row.plan_approved_by as string | null) ?? null,
     testResults: parseJson<TestResult[]>(row.test_results, []),
     diff: (row.diff as string | null) ?? null,
     prUrl: (row.pr_url as string | null) ?? null,
@@ -398,7 +406,9 @@ export class JobStore {
         if (patch.checkpointId !== undefined) set("checkpoint_id", patch.checkpointId);
         if (patch.workspace !== undefined) set("workspace", JSON.stringify(patch.workspace));
         if (patch.branchName !== undefined) set("branch_name", patch.branchName);
-        if (patch.plan !== undefined) set("plan", JSON.stringify(patch.plan));
+        if (patch.plan !== undefined) set("plan", sanitizeOutput(JSON.stringify(patch.plan), MAX_PLAN_CHARS));
+        if (patch.planApprovedAt !== undefined) set("plan_approved_at", patch.planApprovedAt);
+        if (patch.planApprovedBy !== undefined) set("plan_approved_by", patch.planApprovedBy.slice(0, 200));
         if (patch.testResults !== undefined) set("test_results", JSON.stringify(sanitizeTestResults(patch.testResults)));
         if (patch.diff !== undefined) set("diff", sanitizeOutput(patch.diff, MAX_DIFF_CHARS));
         if (patch.prUrl !== undefined) set("pr_url", patch.prUrl);
@@ -435,6 +445,34 @@ export class JobStore {
 
   fail(id: string, error: string, reason: FailureReason = "error", now = new Date()): Job {
     return this.transition(id, "failed", { patch: { error, failureReason: reason }, now });
+  }
+
+  /**
+   * Approve the plan currently shown to the user. `expectedVersion` must match
+   * the version the user saw, so a plan that changed since cannot be approved.
+   */
+  approvePlan(id: string, expectedVersion: number, approvedBy: string, now = new Date()): Job {
+    const job = this.get(id);
+    const plan = job.plan as { plan?: { needsClarification?: boolean } } | null;
+    if (!plan?.plan) throw new InvalidTransitionError(`Job ${id} has no plan to approve`);
+    if (plan.plan.needsClarification) throw new InvalidTransitionError("This plan needs clarification and cannot be approved");
+    return this.transition(id, "editing", {
+      expectedState: "awaiting_plan_approval",
+      expectedVersion,
+      message: `Plan approved by ${approvedBy}`,
+      patch: { planApprovedAt: now.toISOString(), planApprovedBy: approvedBy },
+      now,
+    });
+  }
+
+  rejectPlan(id: string, expectedVersion: number, now = new Date()): Job {
+    return this.transition(id, "canceled", {
+      expectedState: "awaiting_plan_approval",
+      expectedVersion,
+      message: "Plan rejected",
+      patch: { cancelReason: "plan_rejected" },
+      now,
+    });
   }
 
   /** Re-queue a failed job (bounded by MAX_ATTEMPTS and the one-active-job rule). */

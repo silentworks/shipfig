@@ -62,6 +62,11 @@ const MIGRATIONS: string[] = [
   ALTER TABLE jobs ADD COLUMN checkpoint_id TEXT;
   ALTER TABLE jobs ADD COLUMN workspace TEXT;
   `,
+  // v3 (SIL-531): plan approval record.
+  `
+  ALTER TABLE jobs ADD COLUMN plan_approved_at TEXT;
+  ALTER TABLE jobs ADD COLUMN plan_approved_by TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {
