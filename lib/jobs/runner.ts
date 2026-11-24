@@ -1,13 +1,16 @@
 import { AgentLimitError, AgentOutputError, AgentStoppedError } from "@/lib/agent/loop";
 import { type AgentModel, agentModel } from "@/lib/agent/model";
-import { planIssue } from "@/lib/agent/planner";
+import { executePlan } from "@/lib/agent/executor";
+import { type PlanRecord, planIssue } from "@/lib/agent/planner";
+import { policyViolations } from "@/lib/agent/policy";
+import { changedFiles, runChecks } from "@/lib/verify/checks";
 import { getAllowedIssue, getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
 import type { Issue } from "@/lib/github/schemas";
 import { redact } from "@/lib/redact";
 import { type Sandbox, createJobSandbox, destroyJobSandbox, openJobSandbox } from "@/lib/sprites/sandbox";
 import { type ProvisionDeps, SetupError, provisionWorkspace } from "@/lib/workspace/provision";
 import type { FailureReason, JobState } from "./states";
-import { isTerminal } from "./states";
+import { MAX_REPAIR_ATTEMPTS, isTerminal } from "./states";
 import { InvalidTransitionError, type Job, type JobStore, jobStore } from "./store";
 
 /**
@@ -134,6 +137,109 @@ stages.planning = async (job, ctx) => {
     message: `Plan ready: ${record.plan.files.length} file(s), checks ${record.runnableChecks.join(", ") || "none"}`,
     patch: { plan: record },
   });
+};
+
+function approvedPlan(job: Job): PlanRecord {
+  const record = job.plan as PlanRecord | null;
+  if (!record?.plan || !job.planApprovedAt) throw new StageError("error", "Job has no approved plan");
+  return record;
+}
+
+/**
+ * editing: run the executor on the approved plan. On a repair attempt the
+ * failing check output from the previous testing stage is passed back.
+ */
+stages.editing = async (job, ctx) => {
+  const { store } = ctx.deps;
+  if (!job.workspace) throw new StageError("setup_error", "Job has no workspace");
+  const plan = approvedPlan(job);
+  const sandbox = await ctx.sandbox();
+  const issue = await ctx.deps.getAllowedIssue({ owner: job.repoOwner, repo: job.repoName, issueNumber: job.issueNumber });
+  const repair = job.retryCount > 0 ? { attempt: job.retryCount, failures: job.testResults.filter((r) => r.status !== "passed") } : undefined;
+  const model = ctx.deps.model();
+  ctx.log("info", repair ? `Repair attempt ${repair.attempt} of ${MAX_REPAIR_ATTEMPTS}` : `Editing with ${model.name}`);
+  const startedAt = new Date().toISOString();
+  const { report, session, usage } = await executePlan({
+    sandbox,
+    workspace: job.workspace,
+    issue,
+    plan,
+    model,
+    repair,
+    onEvent: (e) => ctx.log(e.kind === "tool_error" ? "error" : "info", `executor ${e.message}`),
+    shouldStop: stopUnless(store, job.id, "editing"),
+  }).catch(agentFailure);
+
+  const attempt = {
+    attempt: job.retryCount,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    report,
+    filesWritten: [...session.written],
+    refusals: session.refusals,
+    agentCheckRuns: session.checkRuns.map((r) => ({ name: r.name, status: r.status, exitCode: r.exitCode })),
+    usage,
+  };
+  store.transition(job.id, "testing", {
+    expectedState: "editing",
+    message: `Executor wrote ${session.written.size} file(s)${session.refusals.length ? `, ${session.refusals.length} write(s) refused by policy` : ""}`,
+    patch: { execution: [...job.execution, attempt] },
+  });
+};
+
+/**
+ * testing: Shipfig (not the model) re-runs the approved checks and decides.
+ * Failed checks go back to editing at most MAX_REPAIR_ATTEMPTS times.
+ */
+stages.testing = async (job, ctx) => {
+  const { store } = ctx.deps;
+  if (!job.workspace) throw new StageError("setup_error", "Job has no workspace");
+  const plan = approvedPlan(job);
+  const sandbox = await ctx.sandbox();
+  const root = job.workspace.root;
+
+  const files = await changedFiles(sandbox, root);
+  if (files.length === 0) throw new StageError("no_changes", "The executor made no changes to the repository");
+  const violations = policyViolations(files);
+  if (violations.length > 0) {
+    throw new StageError("policy_violation", `Protected files changed: ${violations.map((v) => `${v.path} (${v.reason})`).join("; ")}`);
+  }
+
+  const results = await runChecks(sandbox, root, plan.runnableChecks);
+  for (const r of results) {
+    ctx.log("command", `$ ${r.command.join(" ")} → ${r.status === "timed_out" ? "timed out" : `exit ${r.exitCode}`} (${((r.durationMs ?? 0) / 1000).toFixed(1)}s)`, {
+      exitCode: r.exitCode,
+      durationMs: r.durationMs,
+    });
+  }
+  const failed = results.filter((r) => r.status !== "passed");
+  await sandbox.run(["git", "add", "--intent-to-add", "--all"], { cwd: root, timeoutMs: 30_000 });
+  const diff = (await sandbox.run(["git", "diff", "--no-color", "--no-ext-diff", "HEAD"], { cwd: root, timeoutMs: 30_000, maxOutputChars: 200_000 })).stdout;
+
+  if (failed.length === 0) {
+    store.transition(job.id, "awaiting_publish_approval", {
+      expectedState: "testing",
+      message: results.length > 0 ? `All ${results.length} check(s) passed on ${files.length} changed file(s)` : `No runnable checks; ${files.length} changed file(s) are unverified`,
+      patch: { testResults: results, diff },
+    });
+  } else if (job.retryCount < MAX_REPAIR_ATTEMPTS) {
+    store.transition(job.id, "editing", {
+      expectedState: "testing",
+      message: `${failed.map((f) => f.name).join(", ")} failed; starting repair attempt ${job.retryCount + 1} of ${MAX_REPAIR_ATTEMPTS}`,
+      patch: { testResults: results, diff },
+    });
+  } else {
+    store.transition(job.id, "failed", {
+      expectedState: "testing",
+      message: `Checks still failing after ${MAX_REPAIR_ATTEMPTS} repair attempts`,
+      patch: {
+        testResults: results,
+        diff,
+        failureReason: "repair_limit",
+        error: `${failed.map((f) => `${f.command.join(" ")} ${f.status === "timed_out" ? "timed out" : `exited ${f.exitCode}`}`).join("; ")} after ${MAX_REPAIR_ATTEMPTS} repair attempts`,
+      },
+    });
+  }
 };
 
 /** Register (or replace) the stage for a state. Later milestones plug in here. */

@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "spike": "node --env-file-if-exists=.env.local --import tsx scripts/sprites-spike.ts",
     "connector": "node --env-file-if-exists=.env.local --import tsx scripts/connector.ts",
-    "workspace-smoke": "node --env-file-if-exists=.env.local --import tsx scripts/workspace-smoke.ts"
+    "workspace-smoke": "node --env-file-if-exists=.env.local --import tsx scripts/workspace-smoke.ts",
+    "sandbox-tools-smoke": "node --env-file-if-exists=.env.local --import tsx scripts/sandbox-tools-smoke.ts"
   },
   "dependencies": {
     "@fly/sprites": "^0.2.5",

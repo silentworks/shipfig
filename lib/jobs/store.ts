@@ -37,6 +37,20 @@ export interface WorkspaceInfo {
   installExitCode: number | null;
 }
 
+/** One executor run (first attempt or a repair). */
+export interface ExecutionAttempt {
+  attempt: number;
+  startedAt: string;
+  finishedAt: string;
+  /** The executor's own report: a claim, not evidence. */
+  report: unknown;
+  filesWritten: string[];
+  refusals: string[];
+  /** Checks the executor ran while editing (informational; the testing stage is authoritative). */
+  agentCheckRuns: { name: string; status: string; exitCode: number | null }[];
+  usage: { inputTokens: number; outputTokens: number; turns: number; toolCalls: number };
+}
+
 export interface Job {
   id: string;
   repoOwner: string;
@@ -62,6 +76,7 @@ export interface Job {
   planApprovedAt: string | null;
   planApprovedBy: string | null;
   testResults: TestResult[];
+  execution: ExecutionAttempt[];
   diff: string | null;
   prUrl: string | null;
   retryCount: number;
@@ -121,6 +136,7 @@ export interface JobPatch {
   planApprovedAt?: string;
   planApprovedBy?: string;
   testResults?: TestResult[];
+  execution?: ExecutionAttempt[];
   diff?: string;
   prUrl?: string;
   error?: string;
@@ -184,6 +200,7 @@ function rowToJob(row: Row): Job {
     planApprovedAt: (row.plan_approved_at as string | null) ?? null,
     planApprovedBy: (row.plan_approved_by as string | null) ?? null,
     testResults: parseJson<TestResult[]>(row.test_results, []),
+    execution: parseJson<ExecutionAttempt[]>(row.execution, []),
     diff: (row.diff as string | null) ?? null,
     prUrl: (row.pr_url as string | null) ?? null,
     retryCount: Number(row.retry_count),
@@ -410,6 +427,7 @@ export class JobStore {
         if (patch.planApprovedAt !== undefined) set("plan_approved_at", patch.planApprovedAt);
         if (patch.planApprovedBy !== undefined) set("plan_approved_by", patch.planApprovedBy.slice(0, 200));
         if (patch.testResults !== undefined) set("test_results", JSON.stringify(sanitizeTestResults(patch.testResults)));
+        if (patch.execution !== undefined) set("execution", sanitizeOutput(JSON.stringify(patch.execution), MAX_PLAN_CHARS * 2));
         if (patch.diff !== undefined) set("diff", sanitizeOutput(patch.diff, MAX_DIFF_CHARS));
         if (patch.prUrl !== undefined) set("pr_url", patch.prUrl);
         if (patch.error !== undefined) set("error", sanitizeOutput(patch.error, MAX_ERROR_CHARS));
