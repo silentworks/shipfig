@@ -54,6 +54,14 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX job_events_job ON job_events(job_id, id);
   `,
+  // v2 (SIL-530): workspace provenance.
+  `
+  ALTER TABLE jobs ADD COLUMN sprite_id TEXT;
+  ALTER TABLE jobs ADD COLUMN base_branch TEXT;
+  ALTER TABLE jobs ADD COLUMN base_sha TEXT;
+  ALTER TABLE jobs ADD COLUMN checkpoint_id TEXT;
+  ALTER TABLE jobs ADD COLUMN workspace TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

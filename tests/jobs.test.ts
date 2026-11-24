@@ -15,9 +15,9 @@ const input = {
 };
 
 const happyPath: JobState[] = [
+  "provisioning",
   "planning",
   "awaiting_plan_approval",
-  "provisioning",
   "editing",
   "testing",
   "awaiting_publish_approval",
@@ -34,9 +34,9 @@ describe("job lifecycle", () => {
   it("covers every PRD state", () => {
     expect(JOB_STATES).toEqual([
       "queued",
+      "provisioning",
       "planning",
       "awaiting_plan_approval",
-      "provisioning",
       "editing",
       "testing",
       "awaiting_publish_approval",
@@ -78,9 +78,9 @@ describe("job lifecycle", () => {
 
   it("enforces expectedState and expectedVersion", () => {
     const job = store.create(input);
-    expect(() => store.transition(job.id, "planning", { expectedState: "testing" })).toThrow(InvalidTransitionError);
-    expect(() => store.transition(job.id, "planning", { expectedVersion: job.version + 1 })).toThrow(InvalidTransitionError);
-    expect(store.transition(job.id, "planning", { expectedVersion: job.version }).state).toBe("planning");
+    expect(() => store.transition(job.id, "provisioning", { expectedState: "testing" })).toThrow(InvalidTransitionError);
+    expect(() => store.transition(job.id, "provisioning", { expectedVersion: job.version + 1 })).toThrow(InvalidTransitionError);
+    expect(store.transition(job.id, "provisioning", { expectedVersion: job.version }).state).toBe("provisioning");
   });
 
   it("does not allow cancel while publishing", () => {
@@ -91,6 +91,7 @@ describe("job lifecycle", () => {
 
   it("records explicit cancel and fail reasons", () => {
     const a = store.create(input);
+    store.transition(a.id, "provisioning");
     store.transition(a.id, "planning");
     store.transition(a.id, "awaiting_plan_approval");
     const canceled = store.cancel(a.id, "plan_rejected");
@@ -161,12 +162,12 @@ describe("timeouts", () => {
   it("fails jobs past their state deadline with reason timeout", () => {
     const t0 = new Date("2026-01-01T00:00:00Z");
     const job = store.create(input, t0);
-    store.transition(job.id, "planning", { now: t0 });
+    store.transition(job.id, "provisioning", { now: t0 });
     expect(store.expireTimedOut(new Date(t0.getTime() + 60_000))).toHaveLength(0);
-    const expired = store.expireTimedOut(new Date(t0.getTime() + 6 * 60_000));
+    const expired = store.expireTimedOut(new Date(t0.getTime() + 11 * 60_000));
     expect(expired).toHaveLength(1);
     expect(store.get(job.id)).toMatchObject({ state: "failed", failureReason: "timeout" });
-    expect(store.events(job.id).at(-1)?.message).toMatch(/Timed out in planning/);
+    expect(store.events(job.id).at(-1)?.message).toMatch(/Timed out in provisioning/);
   });
 });
 
@@ -202,11 +203,19 @@ describe("durability", () => {
     const db1 = openDatabase(path);
     const s1 = new JobStore(db1);
     const job = s1.create(input);
-    s1.transition(job.id, "planning");
+    s1.transition(job.id, "provisioning", {
+      patch: { baseSha: "a".repeat(40), checkpointId: "v2", workspace: { root: "/w", packageManager: "npm", scripts: { test: "vitest" }, installExitCode: 0 } },
+    });
     db1.close();
 
     const s2 = new JobStore(openDatabase(path));
-    expect(s2.get(job.id)).toMatchObject({ state: "planning", issueNumber: 7 });
+    expect(s2.get(job.id)).toMatchObject({
+      state: "provisioning",
+      issueNumber: 7,
+      baseSha: "a".repeat(40),
+      checkpointId: "v2",
+      workspace: { scripts: { test: "vitest" } },
+    });
     expect(s2.activeJob()?.id).toBe(job.id);
     expect(() => s2.create(input)).toThrow(ActiveJobExistsError);
   });

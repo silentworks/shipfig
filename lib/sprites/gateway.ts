@@ -209,12 +209,23 @@ export async function githubGatewayRequest<T = unknown>(path: string, options: G
     await sprite.filesystem("/").writeFile(bodyFile, JSON.stringify(options.body));
   }
 
-  let stdout: string;
-  try {
-    const result = await sprite.execFile("curl", buildCurlArgs({ method, url, bodyFile, timeoutSeconds: Math.ceil(timeoutMs / 1000) }), {
+  const exec = () =>
+    sprite.execFile("curl", buildCurlArgs({ method, url, bodyFile, timeoutSeconds: Math.ceil(timeoutMs / 1000) }), {
       timeout: timeoutMs + 10_000,
       maxBuffer: 8 * 1024 * 1024,
     });
+
+  let stdout: string;
+  try {
+    let result;
+    try {
+      result = await exec();
+    } catch (error) {
+      // A cold gateway sprite can take longer than the exec timeout to wake.
+      // GETs are idempotent, so retry those once; never retry writes.
+      if (method !== "GET" || error instanceof ExecError) throw error;
+      result = await exec();
+    }
     stdout = String(result.stdout);
   } catch (error) {
     if (error instanceof ExecError) {
