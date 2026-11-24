@@ -5,13 +5,14 @@ import { useEffect, useState } from "react";
 import { STATE_LABELS } from "@/lib/jobs/states";
 import type { Job } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
+import { StatusBadge } from "./ui";
 
 const POLL_MS = 5000;
 const NEEDS_YOU = new Set<Job["state"]>(["awaiting_plan_approval", "awaiting_publish_approval"]);
 
 /**
- * Shows the one active job (Shipfig runs one at a time) with a link to its
- * page, so a job in progress is never more than one click from the home page.
+ * Shows the one active job (Shipfig runs one at a time) with a direct link to
+ * its page, so a job in progress or awaiting approval is always one click away.
  */
 export function ActiveJobBanner() {
   const [job, setJob] = useState<Job | null>(null);
@@ -43,24 +44,32 @@ export function ActiveJobBanner() {
     <div
       role="status"
       aria-live="polite"
-      className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5 text-sm ${
         needsYou
-          ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
-          : "border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+          ? "border-amber-500/35 bg-amber-500/10 text-amber-950 dark:text-amber-100"
+          : "border-zinc-200/80 bg-white text-zinc-900 dark:border-zinc-800/80 dark:bg-zinc-950 dark:text-zinc-100"
       }`}
     >
-      <p className="min-w-0 break-words">
-        <span className="font-semibold">{needsYou ? "Job needs your approval" : "Job in progress"}</span>
-        {" · "}
-        {STATE_LABELS[job.state]}
-        {" · "}
-        {job.repoOwner}/{job.repoName}#{job.issueNumber} {job.issueTitle}
-      </p>
+      <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+        <StatusBadge tone={needsYou ? "waiting" : "working"}>
+          {needsYou ? "Needs your approval" : STATE_LABELS[job.state]}
+        </StatusBadge>
+        <p className="min-w-0 truncate text-xs sm:text-sm">
+          <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
+            {job.repoOwner}/{job.repoName}#{job.issueNumber}
+          </span>{" "}
+          <span className="font-medium">{job.issueTitle}</span>
+        </p>
+      </div>
       <Link
         href={`/jobs/${job.id}`}
-        className="shrink-0 rounded-md px-3 py-1.5 font-medium underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
+        className={`shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 ${
+          needsYou
+            ? "bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400"
+            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        }`}
       >
-        View job
+        {needsYou ? "Review now →" : "Open job →"}
       </Link>
     </div>
   );

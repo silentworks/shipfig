@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { JobEvent } from "@/lib/jobs/store";
-import { Panel } from "./ui";
+import { CollapsiblePanel, StatusBadge } from "./ui";
 
 type Filter = "all" | "command" | "error";
 
@@ -19,25 +19,40 @@ function commandExit(e: JobEvent): number | null {
 }
 
 /**
- * The job's event log as a terminal. Everything shown was redacted when it
- * was recorded. Follows new output while scrolled to the bottom.
+ * The job's event log as a collapsible terminal. Follows new output while
+ * scrolled to the bottom; stays collapsed by default when not actively running.
  */
-export function EventLog({ events }: { events: JobEvent[] }) {
+export function EventLog({ events, defaultOpen = false }: { events: JobEvent[]; defaultOpen?: boolean }) {
   const [filter, setFilter] = useState<Filter>("all");
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
-  const shown = events.filter((e) => filter === "all" || e.kind === filter || (filter === "error" && e.kind === "command" && (commandExit(e) ?? 0) !== 0));
+  const shown = events.filter(
+    (e) => filter === "all" || e.kind === filter || (filter === "error" && e.kind === "command" && (commandExit(e) ?? 0) !== 0),
+  );
 
   useEffect(() => {
     const el = scroller.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [shown.length]);
 
-  const counts = { all: events.length, command: events.filter((e) => e.kind === "command").length, error: events.filter((e) => e.kind === "error" || (e.kind === "command" && (commandExit(e) ?? 0) !== 0)).length };
+  const counts = {
+    all: events.length,
+    command: events.filter((e) => e.kind === "command").length,
+    error: events.filter((e) => e.kind === "error" || (e.kind === "command" && (commandExit(e) ?? 0) !== 0)).length,
+  };
 
   return (
-    <Panel
+    <CollapsiblePanel
       title="Terminal"
+      defaultOpen={defaultOpen}
+      badge={
+        counts.error > 0 ? (
+          <StatusBadge tone="failed">{counts.error} problem{counts.error === 1 ? "" : "s"}</StatusBadge>
+        ) : (
+          <span className="font-mono text-[11px] text-zinc-400">{counts.all} events</span>
+        )
+      }
+      summary={events.length > 0 ? events[events.length - 1].message : "No events yet"}
       actions={
         <div role="group" aria-label="Filter events" className="flex gap-1 text-xs">
           {(["all", "command", "error"] as const).map((f) => (
@@ -46,7 +61,11 @@ export function EventLog({ events }: { events: JobEvent[] }) {
               type="button"
               aria-pressed={filter === f}
               onClick={() => setFilter(f)}
-              className={`rounded px-2 py-1 focus-visible:outline-2 focus-visible:outline-zinc-500 ${filter === f ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"}`}
+              className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-zinc-500 ${
+                filter === f
+                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              }`}
             >
               {f === "all" ? "All" : f === "command" ? "Commands" : "Problems"} ({counts[f]})
             </button>
@@ -64,7 +83,7 @@ export function EventLog({ events }: { events: JobEvent[] }) {
           const el = e.currentTarget;
           pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
         }}
-        className="max-h-[28rem] overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-100"
+        className="max-h-[24rem] overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-100"
       >
         {shown.length === 0 ? (
           <p className="text-zinc-500">{events.length === 0 ? "No events yet." : "Nothing matches this filter."}</p>
@@ -95,6 +114,6 @@ export function EventLog({ events }: { events: JobEvent[] }) {
           </ol>
         )}
       </div>
-    </Panel>
+    </CollapsiblePanel>
   );
 }

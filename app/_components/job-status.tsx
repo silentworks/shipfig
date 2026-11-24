@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AWAITING_HUMAN_STATES, STATE_LABELS, isTerminal } from "@/lib/jobs/states";
 import type { Job, JobEvent } from "@/lib/jobs/store";
@@ -11,24 +10,16 @@ import { ChecksView, DiffView, ExecutorAttempts, ReviewView } from "./evidence-v
 import { JobTimeline } from "./job-timeline";
 import { PlanView } from "./plan-view";
 import { PublishView } from "./publish-view";
-import { Button, ErrorNotice, Loading, Panel } from "./ui";
+import { type BadgeTone, Button, ErrorNotice, Loading, Panel, StatusBadge } from "./ui";
 
 /** Poll quickly while Shipfig is working, slowly while it waits for a human, and not at all in a hidden tab. */
 const POLL_WORKING_MS = 2_000;
 const POLL_WAITING_MS = 6_000;
 const SPRITE_POLL_MS = 15_000;
 
-const STATE_TONE: Record<string, string> = {
-  completed: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
-  failed: "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200",
-  canceled: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
-  waiting: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
-  working: "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
-};
-
-function stateTone(job: Job) {
-  if (job.state === "completed" || job.state === "failed" || job.state === "canceled") return STATE_TONE[job.state];
-  return AWAITING_HUMAN_STATES.has(job.state) ? STATE_TONE.waiting : STATE_TONE.working;
+function stateTone(job: Job): BadgeTone {
+  if (job.state === "completed" || job.state === "failed" || job.state === "canceled") return job.state;
+  return AWAITING_HUMAN_STATES.has(job.state) ? "waiting" : "working";
 }
 
 function useSpriteStatus(id: string, active: boolean) {
@@ -55,9 +46,8 @@ function useSpriteStatus(id: string, active: boolean) {
 }
 
 /**
- * Job dashboard: issue → plan → patch → checks → diff → publish → PR, with a
- * timeline built from recorded transitions, the real command results, the
- * exact diff, and state-aware approve/reject actions.
+ * Job dashboard: guides the human through issue → plan → checks → diff → PR
+ * with a clear header, sticky next-action callout, and progressive disclosure.
  */
 export function JobStatus({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null);
@@ -83,12 +73,13 @@ export function JobStatus({ id }: { id: string }) {
         if (stopped) return;
         setJob(data.job);
         setError(null);
-        // The first fetch of this effect run replaces the log (e.g. after cancel/retry); later ones append.
         const replace = first;
         first = false;
         if (data.events.length > 0) lastEventId = data.events[data.events.length - 1].id;
         if (replace || data.events.length > 0) setEvents((prev) => (replace ? data.events : [...prev, ...data.events]));
-        if (!isTerminal(data.job.state)) timer = setTimeout(poll, AWAITING_HUMAN_STATES.has(data.job.state) ? POLL_WAITING_MS : POLL_WORKING_MS);
+        if (!isTerminal(data.job.state)) {
+          timer = setTimeout(poll, AWAITING_HUMAN_STATES.has(data.job.state) ? POLL_WAITING_MS : POLL_WORKING_MS);
+        }
       } catch (e) {
         if (stopped) return;
         setError((e as Error).message);
@@ -136,33 +127,53 @@ export function JobStatus({ id }: { id: string }) {
   const canCancel = !isTerminal(job.state) && job.state !== "publishing";
   const canRetry = job.state === "failed";
   const resumesPublish = canRetry && job.failureReason === "publish_error" && job.hasPublishBundle;
+  const awaitingPlan = job.state === "awaiting_plan_approval";
+  const awaitingPublish = job.state === "awaiting_publish_approval";
+  const inReviewOrDone = awaitingPublish || job.state === "publishing" || job.state === "completed";
+  const terminalDefaultOpen = (!isTerminal(job.state) && !AWAITING_HUMAN_STATES.has(job.state)) || job.state === "failed";
+  const reason = job.failureReason ?? job.cancelReason;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {error && <ErrorNotice message={error} />}
 
-      <section aria-labelledby="job-title" className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      {/* Job header + lifecycle stepper */}
+      <section
+        aria-labelledby="job-title"
+        className="rounded-lg border border-zinc-200/80 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-xs text-zinc-500">
-              <a href={job.issueUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
-                {job.repoOwner}/{job.repoName}#{job.issueNumber}
-              </a>{" "}
-              · job <span className="font-mono">{job.id}</span>
-            </p>
-            <h1 id="job-title" className="mt-0.5 break-words text-lg font-semibold">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+              <a
+                href={job.issueUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
+              >
+                {job.repoOwner}/{job.repoName}#{job.issueNumber} ↗
+              </a>
+              <span aria-hidden>·</span>
+              <span className="font-mono">{job.id}</span>
+            </div>
+            <h1 id="job-title" className="mt-1 break-words text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {job.issueTitle}
             </h1>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            <span aria-live="polite" className={`rounded-full px-2.5 py-1 text-xs font-medium ${stateTone(job)}`}>
+            <StatusBadge tone={stateTone(job)}>
               {STATE_LABELS[job.state]}
-              {job.failureReason ? ` · ${job.failureReason.replace(/_/g, " ")}` : ""}
-              {job.cancelReason ? ` · ${job.cancelReason.replace(/_/g, " ")}` : ""}
-            </span>
+              {reason ? ` · ${reason.replace(/_/g, " ")}` : ""}
+            </StatusBadge>
             {job.prUrl && (
-              <a href={job.prUrl} target="_blank" rel="noopener noreferrer" className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
-                View PR #{job.publishResult?.prNumber ?? ""}
+              <a
+                href={job.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-8 items-center rounded-md bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
+              >
+                View PR #{job.publishResult?.prNumber ?? ""} ↗
               </a>
             )}
             {canRetry && (
@@ -178,94 +189,138 @@ export function JobStatus({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-5 border-t border-zinc-100 pt-4 dark:border-zinc-900">
           <JobTimeline steps={steps} now={now} />
         </div>
 
-        <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-1 border-t border-zinc-100 pt-3 text-xs sm:grid-cols-[auto_1fr] dark:border-zinc-900">
-          <dt className="text-zinc-500">Created</dt>
-          <dd>
-            <time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString()}</time> · attempt {job.attempt} · repairs {job.retryCount}
-            {job.finishedAt && (
-              <>
-                {" "}
-                · finished <time dateTime={job.finishedAt}>{new Date(job.finishedAt).toLocaleString()}</time>
-              </>
-            )}
-          </dd>
-          {job.deadlineAt && (
-            <>
-              <dt className="text-zinc-500">Times out</dt>
-              <dd>
-                <time dateTime={job.deadlineAt}>{new Date(job.deadlineAt).toLocaleString()}</time>
-              </dd>
-            </>
-          )}
+        {/* Compact inline metadata strip */}
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-900">
+          <span>
+            Created <time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString()}</time>
+          </span>
           {job.baseSha && (
-            <>
-              <dt className="text-zinc-500">Workspace</dt>
-              <dd className="font-mono">
-                {job.branchName} from {job.baseBranch}@
-                <a href={`https://github.com/${job.repoOwner}/${job.repoName}/commit/${job.baseSha}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
-                  {job.baseSha.slice(0, 12)}
-                </a>
-                {job.checkpointId ? ` · checkpoint ${job.checkpointId}` : ""}
-              </dd>
-            </>
+            <span className="font-mono">
+              {job.branchName} ← {job.baseBranch}@
+              <a
+                href={`https://github.com/${job.repoOwner}/${job.repoName}/commit/${job.baseSha}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2 hover:text-zinc-900 dark:hover:text-zinc-200"
+              >
+                {job.baseSha.slice(0, 8)}
+              </a>
+            </span>
           )}
-          <dt className="text-zinc-500">Sprite</dt>
-          <dd>
-            <span className="font-mono">{job.spriteName ?? "—"}</span>
-            {sprite && (
-              <>
-                {" "}
-                · <span className={sprite.status === "deleted" ? "text-zinc-500" : "font-medium"}>{sprite.status}</span>
-                <span className="text-zinc-500"> (checked {new Date(sprite.checkedAt).toLocaleTimeString()})</span>
-              </>
-            )}
-          </dd>
-          {job.error && (
-            <>
-              <dt className="text-zinc-500">Error</dt>
-              <dd className="min-w-0 text-red-700 [overflow-wrap:anywhere] dark:text-red-300">{job.error}</dd>
-            </>
+          <span className="font-mono">
+            sprite: {job.spriteName ?? "—"}
+            {sprite ? ` (${sprite.status})` : ""}
+          </span>
+          <span>
+            attempt {job.attempt} · repairs {job.retryCount}
+          </span>
+          {job.deadlineAt && (
+            <span>
+              times out <time dateTime={job.deadlineAt}>{new Date(job.deadlineAt).toLocaleTimeString()}</time>
+            </span>
           )}
-        </dl>
+        </div>
+
+        {job.error && (
+          <div
+            role="alert"
+            className="mt-3 rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-800 [overflow-wrap:anywhere] dark:text-red-200"
+          >
+            <span className="font-semibold">Error: </span>
+            {job.error}
+          </div>
+        )}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="flex min-w-0 flex-col gap-4">
+      {/* Above-the-fold action callout when Shipfig is waiting on the human */}
+      {awaitingPlan && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <div className="min-w-0">
+            <p className="font-medium text-amber-950 dark:text-amber-100">Plan ready for your approval</p>
+            <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+              Review the proposed files and checks below before Shipfig edits any code.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="secondary" onClick={() => post("/plan", { decision: "reject", version: job.version })} disabled={busy}>
+              Reject
+            </Button>
+            <Button onClick={() => post("/plan", { decision: "approve", version: job.version })} disabled={busy}>
+              Approve plan
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {awaitingPublish && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <div className="min-w-0">
+            <p className="font-medium text-amber-950 dark:text-amber-100">Changes verified — ready to open a draft PR</p>
+            <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+              Inspect the diff and check results below, then approve in the Publish section to open a draft pull request.
+            </p>
+          </div>
+          <a
+            href="#publish-section"
+            className="inline-flex h-8 shrink-0 items-center rounded-md bg-amber-600 px-3.5 text-xs font-medium text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400"
+          >
+            Review &amp; publish ↓
+          </a>
+        </div>
+      )}
+
+      {/* Primary content: ordered by what matters most in the current lifecycle stage */}
+      {inReviewOrDone ? (
+        <>
+          <div id="publish-section">
+            <PublishView
+              job={job}
+              busy={busy}
+              onDecision={(decision, acknowledgeUnverified) =>
+                post("/publish", { decision, version: job.version, diffHash: job.diffHash ?? undefined, acknowledgeUnverified })
+              }
+            />
+          </div>
+          <DiffView job={job} />
+          <ChecksView job={job} />
+          <ReviewView job={job} />
+          {job.plan && (
+            <PlanView
+              job={job}
+              busy={busy}
+              collapsible
+              onDecision={(decision) => post("/plan", { decision, version: job.version })}
+            />
+          )}
+        </>
+      ) : (
+        <>
           {job.plan ? (
             <PlanView job={job} busy={busy} onDecision={(decision) => post("/plan", { decision, version: job.version })} />
           ) : (
             <Panel title="Plan">
-              <p className="text-sm text-zinc-500">{job.state === "planning" ? "The planner is reading the repository…" : "No plan yet."}</p>
+              <p className="text-xs text-zinc-500">
+                {job.state === "planning"
+                  ? "The planner is reading the repository and drafting a plan…"
+                  : job.state === "provisioning" || job.state === "queued"
+                    ? "Preparing isolated Sprite workspace before planning…"
+                    : "No plan was generated."}
+              </p>
             </Panel>
           )}
           <ChecksView job={job} />
-        </div>
-        <div className="flex min-w-0 flex-col gap-4">
-          <PublishView
-            job={job}
-            busy={busy}
-            onDecision={(decision, acknowledgeUnverified) => post("/publish", { decision, version: job.version, diffHash: job.diffHash ?? undefined, acknowledgeUnverified })}
-          />
+          <DiffView job={job} />
           <ReviewView job={job} />
-          <EventLog events={events} />
-        </div>
-      </div>
+        </>
+      )}
 
-      <DiffView job={job} />
+      {/* Secondary / diagnostic details collapsed by default when idle or awaiting human */}
+      <EventLog events={events} defaultOpen={terminalDefaultOpen} />
       <ExecutorAttempts job={job} />
-
-      <nav className="flex gap-4 text-sm">
-        <Link href="/" className="underline underline-offset-2">
-          ← Issues
-        </Link>
-        <Link href="/jobs" className="underline underline-offset-2">
-          All jobs
-        </Link>
-      </nav>
     </div>
   );
 }

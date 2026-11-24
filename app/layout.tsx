@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AppShell } from "./_components/app-shell";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -21,23 +21,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="flex min-h-full flex-col bg-zinc-50 text-zinc-900 dark:bg-black dark:text-zinc-100">
-        <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="mx-auto flex h-14 max-w-6xl items-center px-4">
-            <Link href="/" className="font-semibold tracking-tight">
-              Shipfig
-            </Link>
-            <nav aria-label="Main" className="ml-6 flex gap-4 text-sm text-zinc-600 dark:text-zinc-400">
-              <Link href="/" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-                Issues
-              </Link>
-              <Link href="/jobs" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-                Jobs
-              </Link>
-            </nav>
-          </div>
-        </header>
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6">{children}</main>
+      <body className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
