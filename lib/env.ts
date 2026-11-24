@@ -82,20 +82,38 @@ export function spritesEnv(): SpritesEnv {
   return result.data;
 }
 
-const openaiEnvSchema = z.object({
-  OPENAI_API_KEY: z
-    .string({ error: "OPENAI_API_KEY is required for planning and editing (https://platform.openai.com/api-keys)" })
-    .min(1, "OPENAI_API_KEY is required"),
-  SHIPFIG_OPENAI_MODEL: z
-    .string()
-    .regex(/^[A-Za-z0-9._:-]{1,100}$/, "SHIPFIG_OPENAI_MODEL has an invalid format")
-    .default("gpt-5.5"),
-});
-export type OpenAIEnv = z.infer<typeof openaiEnvSchema>;
+const modelId = (name: string) => z.string().regex(/^[A-Za-z0-9._:-]{1,100}$/, `${name} has an invalid format`);
 
-/** OpenAI credentials, validated only when the agent actually runs. */
-export function openaiEnv(): OpenAIEnv {
-  const result = openaiEnvSchema.safeParse(process.env);
+export const AGENT_PROVIDERS = ["openai", "anthropic"] as const;
+export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
+
+const agentEnvSchema = z
+  .object({
+    SHIPFIG_AGENT_PROVIDER: z.enum(AGENT_PROVIDERS, { error: `SHIPFIG_AGENT_PROVIDER must be one of: ${AGENT_PROVIDERS.join(", ")}` }).default("openai"),
+    OPENAI_API_KEY: z.string().optional(),
+    SHIPFIG_OPENAI_MODEL: modelId("SHIPFIG_OPENAI_MODEL").default("gpt-6.2-sol"),
+    /** Optional: the Anthropic SDK also resolves ANTHROPIC_AUTH_TOKEN or an `ant auth login` profile. */
+    ANTHROPIC_API_KEY: z.string().optional(),
+    SHIPFIG_ANTHROPIC_MODEL: modelId("SHIPFIG_ANTHROPIC_MODEL").default("claude-opus-5-5"),
+    SHIPFIG_ANTHROPIC_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
+  })
+  .superRefine((env, ctx) => {
+    if (env.SHIPFIG_AGENT_PROVIDER === "openai" && !env.OPENAI_API_KEY) {
+      ctx.addIssue({
+        code: "custom",
+        message: "OPENAI_API_KEY is required for planning and editing (https://platform.openai.com/api-keys), or set SHIPFIG_AGENT_PROVIDER=anthropic",
+      });
+    }
+  });
+export type AgentEnv = z.infer<typeof agentEnvSchema>;
+
+export function parseAgentEnv(source: Record<string, string | undefined>): AgentEnv {
+  const result = agentEnvSchema.safeParse(source);
   if (!result.success) throw new EnvError(result.error.issues.map((i) => i.message));
   return result.data;
+}
+
+/** Model provider configuration, validated only when the agent actually runs. */
+export function agentEnv(): AgentEnv {
+  return parseAgentEnv(process.env);
 }
