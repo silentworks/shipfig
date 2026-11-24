@@ -67,6 +67,10 @@ const MIGRATIONS: string[] = [
   ALTER TABLE jobs ADD COLUMN plan_approved_at TEXT;
   ALTER TABLE jobs ADD COLUMN plan_approved_by TEXT;
   `,
+  // v4 (SIL-532): executor attempts (reports, files written, refusals, usage).
+  `
+  ALTER TABLE jobs ADD COLUMN execution TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

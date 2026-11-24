@@ -45,6 +45,7 @@ them return `503 not_configured`, and the error names the missing variable.
 | `npm test` | Vitest unit tests |
 | `npm run spike -- owner/repo N` | Live Sprites + GitHub connector proof (SIL-527) |
 | `npm run connector -- list\|show\|apply-policy` | Inspect or restrict the GitHub connector |
+| `npm run sandbox-tools-smoke` | Live check of the agent's file tools and policies on a scratch repo in a real sprite (SIL-532) |
 | `npm run workspace-smoke -- owner/repo` | Live job-workspace check: provision, prove isolation, run the repo's tests, delete (SIL-530) |
 
 ## How it fits together
@@ -69,6 +70,14 @@ them return `503 not_configured`, and the error names the missing variable.
   paths and checks against the real repo, and a human must approve it
   (`POST /api/jobs/:id/plan`). Issue and repo text is fenced as untrusted data,
   and secret files (`.env`, keys, `.npmrc` …) are never read.
+- `lib/agent/executor.ts`: after plan approval, the executor gets the read
+  tools plus `write_file`, `edit_file` (exact single match), `run_check`
+  (approved npm checks only) and `get_diff`. No shell, git-write, network or
+  GitHub tool. Writes to credentials, CI, deployment, `package.json`,
+  lockfiles, `.git` and `node_modules` are refused (`lib/agent/policy.ts`).
+  Shipfig then re-runs the checks itself; the executor's own report is never
+  taken as evidence. Failed checks go back to editing at most twice, then the
+  job fails with `repair_limit`, keeping the diff and output.
 - `lib/jobs/runner.ts`: drives a job through its automated states
   (queued → provisioning → planning …) until it needs a human, and deletes the
   sprite once the job ends.
