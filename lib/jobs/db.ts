@@ -71,6 +71,12 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE jobs ADD COLUMN execution TEXT;
   `,
+  // v5 (SIL-533): verification evidence.
+  `
+  ALTER TABLE jobs ADD COLUMN baseline_results TEXT;
+  ALTER TABLE jobs ADD COLUMN verification TEXT;
+  ALTER TABLE jobs ADD COLUMN diff_hash TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

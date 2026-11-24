@@ -1,3 +1,4 @@
+import { redact } from "@/lib/redact";
 import type { CommandResult, RunOptions, Sandbox } from "@/lib/sprites/sandbox";
 
 export type Handler = (argv: string[], options: RunOptions) => Partial<CommandResult> | undefined;
@@ -21,8 +22,9 @@ export class FakeSandbox implements Sandbox {
     return {
       argv: args,
       exitCode: r.timedOut ? null : (r.exitCode ?? 0),
-      stdout: r.stdout ?? "",
-      stderr: r.stderr ?? "",
+      // Like the real sandbox, output is redacted before Shipfig sees it.
+      stdout: redact(r.stdout ?? ""),
+      stderr: redact(r.stderr ?? ""),
       durationMs: r.durationMs ?? 5,
       timedOut: r.timedOut ?? false,
     };

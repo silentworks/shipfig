@@ -4,6 +4,8 @@ import { executePlan } from "@/lib/agent/executor";
 import { type PlanRecord, planIssue } from "@/lib/agent/planner";
 import { policyViolations } from "@/lib/agent/policy";
 import { changedFiles, runChecks } from "@/lib/verify/checks";
+import { type Verification, captureDiff, evidenceFlags, missingCheckResults, secretsInPatch, verificationOutcome } from "@/lib/verify/evidence";
+import { reviewChanges } from "@/lib/verify/review";
 import { getAllowedIssue, getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
 import type { Issue } from "@/lib/github/schemas";
 import { redact } from "@/lib/redact";
@@ -11,7 +13,7 @@ import { type Sandbox, createJobSandbox, destroyJobSandbox, openJobSandbox } fro
 import { type ProvisionDeps, SetupError, provisionWorkspace } from "@/lib/workspace/provision";
 import type { FailureReason, JobState } from "./states";
 import { MAX_REPAIR_ATTEMPTS, isTerminal } from "./states";
-import { InvalidTransitionError, type Job, type JobStore, jobStore } from "./store";
+import { InvalidTransitionError, type Job, type JobStore, type TestResult, jobStore } from "./store";
 
 /**
  * In-process job orchestrator (single-instance MVP). `kickJob` drives a job
@@ -157,6 +159,15 @@ stages.editing = async (job, ctx) => {
   const issue = await ctx.deps.getAllowedIssue({ owner: job.repoOwner, repo: job.repoName, issueNumber: job.issueNumber });
   const repair = job.retryCount > 0 ? { attempt: job.retryCount, failures: job.testResults.filter((r) => r.status !== "passed") } : undefined;
   const model = ctx.deps.model();
+
+  // Baseline: run the approved checks on the untouched checkout first, so a
+  // pre-existing failure is not mistaken for (or hidden by) the change.
+  let baselineResults: TestResult[] | undefined;
+  if (!repair && job.execution.length === 0 && plan.runnableChecks.length > 0) {
+    baselineResults = await runChecks(sandbox, job.workspace.root, plan.runnableChecks);
+    for (const r of baselineResults) ctx.log("command", `baseline $ ${r.command.join(" ")} → ${r.status === "timed_out" ? "timed out" : `exit ${r.exitCode}`}${r.summary ? ` · ${r.summary}` : ""}`);
+  }
+
   ctx.log("info", repair ? `Repair attempt ${repair.attempt} of ${MAX_REPAIR_ATTEMPTS}` : `Editing with ${model.name}`);
   const startedAt = new Date().toISOString();
   const { report, session, usage } = await executePlan({
@@ -183,7 +194,7 @@ stages.editing = async (job, ctx) => {
   store.transition(job.id, "testing", {
     expectedState: "editing",
     message: `Executor wrote ${session.written.size} file(s)${session.refusals.length ? `, ${session.refusals.length} write(s) refused by policy` : ""}`,
-    patch: { execution: [...job.execution, attempt] },
+    patch: { execution: [...job.execution, attempt], ...(baselineResults ? { baselineResults } : {}) },
   });
 };
 
@@ -205,41 +216,88 @@ stages.testing = async (job, ctx) => {
     throw new StageError("policy_violation", `Protected files changed: ${violations.map((v) => `${v.path} (${v.reason})`).join("; ")}`);
   }
 
-  const results = await runChecks(sandbox, root, plan.runnableChecks);
-  for (const r of results) {
-    ctx.log("command", `$ ${r.command.join(" ")} → ${r.status === "timed_out" ? "timed out" : `exit ${r.exitCode}`} (${((r.durationMs ?? 0) / 1000).toFixed(1)}s)`, {
+  // Shipfig runs the checks itself; outcomes come only from exit codes.
+  const ran = await runChecks(sandbox, root, plan.runnableChecks);
+  for (const r of ran) {
+    ctx.log("command", `$ ${r.command.join(" ")} → ${r.status === "timed_out" ? "timed out" : `exit ${r.exitCode}`} (${((r.durationMs ?? 0) / 1000).toFixed(1)}s)${r.summary ? ` · ${r.summary}` : ""}`, {
       exitCode: r.exitCode,
       durationMs: r.durationMs,
     });
   }
-  const failed = results.filter((r) => r.status !== "passed");
-  await sandbox.run(["git", "add", "--intent-to-add", "--all"], { cwd: root, timeoutMs: 30_000 });
-  const diff = (await sandbox.run(["git", "diff", "--no-color", "--no-ext-diff", "HEAD"], { cwd: root, timeoutMs: 30_000, maxOutputChars: 200_000 })).stdout;
+  const results = [...ran, ...missingCheckResults(plan.missingChecks)];
+  const diff = await captureDiff(sandbox, root);
+  const flags = evidenceFlags({ diff, plan, baseline: job.baselineResults, results });
+  const outcome = verificationOutcome(results, plan.missingChecks);
+  const verification = (review: Verification["review"], reviewError: string | null): Verification => ({
+    outcome,
+    missingChecks: plan.missingChecks,
+    baseline: job.baselineResults,
+    diff: { files: diff.files, additions: diff.additions, deletions: diff.deletions, hash: diff.hash, truncated: diff.truncated },
+    regressionTestChanged: !flags.some((f) => f.startsWith("No test file")),
+    flags,
+    review,
+    reviewError,
+    createdAt: new Date().toISOString(),
+  });
+  const evidence = { testResults: results, diff: diff.patch, diffHash: diff.hash };
 
-  if (failed.length === 0) {
-    store.transition(job.id, "awaiting_publish_approval", {
-      expectedState: "testing",
-      message: results.length > 0 ? `All ${results.length} check(s) passed on ${files.length} changed file(s)` : `No runnable checks; ${files.length} changed file(s) are unverified`,
-      patch: { testResults: results, diff },
-    });
-  } else if (job.retryCount < MAX_REPAIR_ATTEMPTS) {
-    store.transition(job.id, "editing", {
-      expectedState: "testing",
-      message: `${failed.map((f) => f.name).join(", ")} failed; starting repair attempt ${job.retryCount + 1} of ${MAX_REPAIR_ATTEMPTS}`,
-      patch: { testResults: results, diff },
-    });
-  } else {
+  if (outcome === "failed") {
+    const failed = ran.filter((r) => r.status !== "passed");
+    if (job.retryCount < MAX_REPAIR_ATTEMPTS) {
+      store.transition(job.id, "editing", {
+        expectedState: "testing",
+        message: `${failed.map((f) => f.name).join(", ")} failed; starting repair attempt ${job.retryCount + 1} of ${MAX_REPAIR_ATTEMPTS}`,
+        patch: { ...evidence, verification: verification(null, null) },
+      });
+    } else {
+      store.transition(job.id, "failed", {
+        expectedState: "testing",
+        message: `Checks still failing after ${MAX_REPAIR_ATTEMPTS} repair attempts`,
+        patch: {
+          ...evidence,
+          verification: verification(null, null),
+          failureReason: "repair_limit",
+          error: `${failed.map((f) => `${f.command.join(" ")} ${f.status === "timed_out" ? "timed out" : `exited ${f.exitCode}`}`).join("; ")} after ${MAX_REPAIR_ATTEMPTS} repair attempts`,
+        },
+      });
+    }
+    return;
+  }
+
+  // Server-side policy on the final diff.
+  const secretFiles = secretsInPatch(diff.patch);
+  if (secretFiles.length > 0) {
     store.transition(job.id, "failed", {
       expectedState: "testing",
-      message: `Checks still failing after ${MAX_REPAIR_ATTEMPTS} repair attempts`,
-      patch: {
-        testResults: results,
-        diff,
-        failureReason: "repair_limit",
-        error: `${failed.map((f) => `${f.command.join(" ")} ${f.status === "timed_out" ? "timed out" : `exited ${f.exitCode}`}`).join("; ")} after ${MAX_REPAIR_ATTEMPTS} repair attempts`,
-      },
+      patch: { ...evidence, verification: verification(null, null), failureReason: "policy_violation", error: `The change adds what looks like a secret in: ${secretFiles.join(", ")}` },
     });
+    return;
   }
+
+  // Model review: can block, never approve.
+  let review: Verification["review"] = null;
+  let reviewError: string | null = null;
+  try {
+    const issue = await ctx.deps.getAllowedIssue({ owner: job.repoOwner, repo: job.repoName, issueNumber: job.issueNumber });
+    review = await reviewChanges({ model: ctx.deps.model(), issue, plan, patch: diff.patch, results, flags });
+  } catch (error) {
+    reviewError = redact((error as Error).message).slice(0, 500);
+    ctx.log("error", `Review unavailable: ${reviewError}`);
+  }
+  if (review?.verdict === "fail") {
+    store.transition(job.id, "failed", {
+      expectedState: "testing",
+      message: "Verification review rejected the change",
+      patch: { ...evidence, verification: verification(review, reviewError), failureReason: "review_failed", error: `Review: ${review.concerns.join("; ") || "rejected"}` },
+    });
+    return;
+  }
+  const label = outcome === "verified" ? `all ${ran.length} check(s) passed` : ran.length > 0 ? `checks passed, but ${plan.missingChecks.join(", ")} could not run` : "no checks could run";
+  store.transition(job.id, "awaiting_publish_approval", {
+    expectedState: "testing",
+    message: `${outcome === "verified" ? "Verified" : "Unverified"}: ${label}; ${diff.files.length} file(s), +${diff.additions}/-${diff.deletions}`,
+    patch: { ...evidence, verification: verification(review, reviewError) },
+  });
 };
 
 /** Register (or replace) the stage for a state. Later milestones plug in here. */

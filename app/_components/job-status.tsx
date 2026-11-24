@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { STATE_LABELS, isTerminal } from "@/lib/jobs/states";
 import type { Job, JobEvent } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
+import { EvidenceView } from "./evidence-view";
 import { PlanView } from "./plan-view";
 import { Button, ErrorNotice, Loading, Muted, Panel } from "./ui";
 
@@ -162,6 +163,7 @@ export function JobStatus({ id }: { id: string }) {
 
       </Panel>
       <PlanView job={job} busy={busy} onDecision={decide} />
+      <EvidenceView job={job} />
       <Panel title="Events">
         {events.length === 0 ? (
           <Muted>No events yet.</Muted>

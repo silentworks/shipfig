@@ -1,7 +1,7 @@
 /**
  * Live check of the agent's file tools on a real job sprite (no GitHub, no
  * model): builds a scratch git repo in a locked-down sprite, then exercises
- * read/write/edit/policy/symlink handling and change detection.
+ * read/write/edit/policy/symlink handling, change detection and diff evidence.
  *
  *   npm run sandbox-tools-smoke
  */
@@ -10,6 +10,7 @@ import { writeTools } from "@/lib/agent/executor";
 import { readOnlyTools } from "@/lib/agent/workspace-tools";
 import { createJobSandbox, destroyJobSandbox } from "@/lib/sprites/sandbox";
 import { changedFiles, runCheck } from "@/lib/verify/checks";
+import { captureDiff } from "@/lib/verify/evidence";
 
 const ROOT = "/home/sprite/shipfig/repo";
 
@@ -57,6 +58,20 @@ async function main() {
     check(JSON.stringify(files.sort()) === JSON.stringify(["src/sum.js", "test/new dir/regression.test.js"]), `changedFiles = ${JSON.stringify(files)}`);
     const diff = await call("get_diff", {});
     check(diff.includes("+exports.sum = (a, b) => a + b;") && diff.includes("new file mode"), "get_diff shows the edit and the new file");
+    console.log(`    npm test summary: ${after.summary}`);
+    const evidence = await captureDiff(sb, ROOT);
+    check(/^[0-9a-f]{64}$/.test(evidence.hash), `captureDiff hashes the raw diff in the sprite (${evidence.hash.slice(0, 12)}…)`);
+    check(
+      JSON.stringify(evidence.files) === JSON.stringify([
+        { path: "src/sum.js", status: "modified", additions: 1, deletions: 1 },
+        { path: "test/new dir/regression.test.js", status: "added", additions: 1, deletions: 0 },
+      ]),
+      `captureDiff file stats: ${JSON.stringify(evidence.files)}`,
+    );
+    const again = await captureDiff(sb, ROOT);
+    check(again.hash === evidence.hash, "diff hash is stable for an unchanged tree");
+    await sb.writeFile(`${ROOT}/src/sum.js`, "exports.sum = (a, b) => b + a;\n");
+    check((await captureDiff(sb, ROOT)).hash !== evidence.hash, "diff hash changes when the change changes");
     const timeout = await sb.run(["sleep", "5"], { timeoutMs: 1000 });
     check(timeout.timedOut && timeout.exitCode === null, "timeouts are reported as timed out with no exit code");
   } catch (error) {

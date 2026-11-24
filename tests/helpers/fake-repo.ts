@@ -49,8 +49,18 @@ export class FakeRepo extends FakeSandbox {
     if (cmd === "git" && args[0] === "status") {
       return { stdout: this.changed().map((f) => `${f in this.original ? " M" : "??"} ${f}\0`).join("") };
     }
+    if (cmd === "sha256sum") return { stdout: `${"ab".repeat(32)}  ${args.at(-1)}\n` };
     if (cmd === "git" && args[0] === "diff") {
-      return { stdout: this.changed().map((f) => `diff --git a/${f} b/${f}\n+${(this.current[f] ?? "").split("\n")[0]}`).join("\n") };
+      const files = this.changed();
+      const status = (f: string) => (!(f in this.original) ? "A" : !(f in this.current) ? "D" : "M");
+      if (args.includes("--numstat")) return { stdout: files.map((f) => `${(this.current[f] ?? "").split("\n").length}\t1\t${f}\0`).join("") };
+      if (args.includes("--name-status")) return { stdout: files.map((f) => `${status(f)}\0${f}\0`).join("") };
+      if (args.some((a) => a.startsWith("--output="))) return { stdout: "" };
+      return {
+        stdout: files
+          .map((f) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n${(this.original[f] ?? "").split("\n").filter(Boolean).map((l) => `-${l}`).join("\n")}\n${(this.current[f] ?? "").split("\n").filter(Boolean).map((l) => `+${l}`).join("\n")}`)
+          .join("\n"),
+      };
     }
     if (cmd === "npm") {
       const name = args[0] === "test" ? "test" : args[1];
