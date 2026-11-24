@@ -43,6 +43,7 @@ them return `503 not_configured`, and the error names the missing variable.
 | `npm test` | Vitest unit tests |
 | `npm run spike -- owner/repo N` | Live Sprites + GitHub connector proof (SIL-527) |
 | `npm run connector -- list\|show\|apply-policy` | Inspect or restrict the GitHub connector |
+| `npm run workspace-smoke -- owner/repo` | Live job-workspace check: provision, prove isolation, run the repo's tests, delete (SIL-530) |
 
 ## How it fits together
 
@@ -52,6 +53,16 @@ them return `503 not_configured`, and the error names the missing variable.
   log. See [docs/github-connector.md](docs/github-connector.md).
 - `lib/github/connector.ts`: typed repo and issue operations with allowlist and
   eligibility checks (public and non-archived only, for the MVP).
+- `lib/sprites/sandbox.ts`: one fresh sprite per job, locked down before use:
+  DNS egress allowlist (github.com and the npm registry only; the Sprites API
+  and connector gateway are unreachable), a memory limit, and no privilege
+  escalation. Commands are argv arrays with timeouts and redacted output.
+- `lib/workspace/provision.ts`: pins the base branch head SHA, fetches exactly
+  that commit anonymously, creates `shipfig/issue-<n>-<job>`, disables git
+  hooks, runs `npm ci --ignore-scripts`, and checkpoints before any edit.
+- `lib/jobs/runner.ts`: drives a job through its automated states
+  (queued → provisioning → planning …) until it needs a human, and deletes the
+  sprite once the job ends.
 - `lib/jobs/*`: durable SQLite job store and guarded state machine. It enforces
   one active job, bounded repairs and retries, per-state timeouts, and
   redacted events and evidence.

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { serverEnv } from "@/lib/env";
 import { githubGatewayRequest } from "@/lib/sprites/gateway";
-import { type IssueRef, type RepoRef, issueRefSchema, pathSegment, repoRefSchema, repoSlug } from "@/lib/validation";
+import { type IssueRef, type RepoRef, branchNameSchema, issueRefSchema, pathSegment, repoRefSchema, repoSlug } from "@/lib/validation";
 import { type Issue, type Repo, githubIssueSchema, githubRepoSchema, githubUserSchema, toIssue, toRepo } from "./schemas";
 
 /**
@@ -135,4 +135,16 @@ export async function getAllowedIssue(ref: IssueRef): Promise<Issue> {
   const parsed = issueRefSchema.parse(ref);
   await getAllowedRepo(parsed);
   return getIssue(parsed);
+}
+
+const gitRefSchema = z.object({ object: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/), type: z.string() }) });
+
+/** Current head commit SHA of a branch (used to pin the job's base commit). */
+export async function getBranchHeadSha(ref: RepoRef, branch: string): Promise<string> {
+  const name = branchNameSchema.parse(branch);
+  const path = `${repoPath(ref)}/git/ref/heads/${name.split("/").map(pathSegment).join("/")}`;
+  const { data } = await githubGatewayRequest(path);
+  const parsed = gitRefSchema.parse(data);
+  if (parsed.object.type !== "commit") throw new Error(`refs/heads/${name} does not point at a commit`);
+  return parsed.object.sha;
 }

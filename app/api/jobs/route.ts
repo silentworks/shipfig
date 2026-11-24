@@ -1,7 +1,8 @@
-import { connection } from "next/server";
+import { after, connection } from "next/server";
 import { z } from "zod";
 import { getAllowedIssue } from "@/lib/github/connector";
 import { errorResponse, jsonError } from "@/lib/http";
+import { startJobInBackground } from "@/lib/jobs/background";
 import { jobStore } from "@/lib/jobs/store";
 import { issueRefSchema } from "@/lib/validation";
 
@@ -10,7 +11,7 @@ export async function GET() {
   await connection();
   try {
     const store = jobStore();
-    store.expireTimedOut();
+    for (const expired of store.expireTimedOut()) after(() => startJobInBackground(expired.id));
     return Response.json({ jobs: store.list(50), activeJobId: store.activeJob()?.id ?? null });
   } catch (error) {
     return errorResponse(error);
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
     const issue = await getAllowedIssue(ref);
     if (issue.state !== "open") return jsonError(409, "issue_not_open", `Issue #${issue.number} is ${issue.state}`);
     const job = store.create({ ...ref, issueTitle: issue.title, issueUrl: issue.url });
+    after(() => startJobInBackground(job.id));
     return Response.json({ job }, { status: 201 });
   } catch (error) {
     return errorResponse(error);

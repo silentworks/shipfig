@@ -25,6 +25,18 @@ export interface TestResult {
   output: string;
 }
 
+/** What provisioning found in the checkout; used by planning and verification. */
+export interface WorkspaceInfo {
+  /** Absolute path of the checkout inside the job sprite. */
+  root: string;
+  /** "npm" or "none" (no package.json). Other package managers are refused. */
+  packageManager: "npm" | "none";
+  /** package.json scripts (names and commands, truncated). */
+  scripts: Record<string, string>;
+  /** Exit code of the dependency install, or null if none was needed. */
+  installExitCode: number | null;
+}
+
 export interface Job {
   id: string;
   repoOwner: string;
@@ -37,6 +49,13 @@ export interface Job {
   cancelReason: CancelReason | null;
   error: string | null;
   spriteName: string | null;
+  spriteId: string | null;
+  baseBranch: string | null;
+  /** Commit the workspace was checked out at (pinned before any edit). */
+  baseSha: string | null;
+  /** Sprite checkpoint taken after setup, before any edit. */
+  checkpointId: string | null;
+  workspace: WorkspaceInfo | null;
   branchName: string | null;
   plan: unknown;
   testResults: TestResult[];
@@ -89,6 +108,11 @@ export class ActiveJobExistsError extends Error {
 /** Fields a transition may set alongside the state change. */
 export interface JobPatch {
   spriteName?: string;
+  spriteId?: string | null;
+  baseBranch?: string;
+  baseSha?: string;
+  checkpointId?: string;
+  workspace?: WorkspaceInfo;
   branchName?: string;
   plan?: unknown;
   testResults?: TestResult[];
@@ -144,6 +168,11 @@ function rowToJob(row: Row): Job {
     cancelReason: (row.cancel_reason as CancelReason | null) ?? null,
     error: (row.error as string | null) ?? null,
     spriteName: (row.sprite_name as string | null) ?? null,
+    spriteId: (row.sprite_id as string | null) ?? null,
+    baseBranch: (row.base_branch as string | null) ?? null,
+    baseSha: (row.base_sha as string | null) ?? null,
+    checkpointId: (row.checkpoint_id as string | null) ?? null,
+    workspace: parseJson<WorkspaceInfo | null>(row.workspace, null),
     branchName: (row.branch_name as string | null) ?? null,
     plan: parseJson(row.plan, null),
     testResults: parseJson<TestResult[]>(row.test_results, []),
@@ -360,6 +389,14 @@ export class JobStore {
           values.push(value);
         };
         if (patch.spriteName !== undefined) set("sprite_name", patch.spriteName);
+        if (patch.spriteId !== undefined) set("sprite_id", patch.spriteId);
+        if (patch.baseBranch !== undefined) set("base_branch", patch.baseBranch);
+        if (patch.baseSha !== undefined) {
+          if (!/^[0-9a-f]{40}$/.test(patch.baseSha)) throw new InvalidTransitionError("baseSha must be a full commit SHA");
+          set("base_sha", patch.baseSha);
+        }
+        if (patch.checkpointId !== undefined) set("checkpoint_id", patch.checkpointId);
+        if (patch.workspace !== undefined) set("workspace", JSON.stringify(patch.workspace));
         if (patch.branchName !== undefined) set("branch_name", patch.branchName);
         if (patch.plan !== undefined) set("plan", JSON.stringify(patch.plan));
         if (patch.testResults !== undefined) set("test_results", JSON.stringify(sanitizeTestResults(patch.testResults)));

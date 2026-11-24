@@ -1,8 +1,11 @@
 /**
  * Job lifecycle for a single Shipfig run:
  *
- *   queued → planning → awaiting_plan_approval → provisioning → editing → testing
+ *   queued → provisioning → planning → awaiting_plan_approval → editing → testing
  *          → awaiting_publish_approval → publishing → completed
+ *
+ * The workspace is provisioned (read-only use) before planning so the planner
+ * can inspect real source; no edits happen until the plan is approved.
  *
  * with `failed` and `canceled` as explicit terminal states, a bounded repair
  * loop (testing → editing) and a bounded retry (failed → queued).
@@ -10,9 +13,9 @@
 
 export const JOB_STATES = [
   "queued",
+  "provisioning",
   "planning",
   "awaiting_plan_approval",
-  "provisioning",
   "editing",
   "testing",
   "awaiting_publish_approval",
@@ -42,10 +45,10 @@ export const MAX_ATTEMPTS = 3;
 
 /** Legal transitions. Anything not listed is rejected. */
 export const TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
-  queued: ["planning", "failed", "canceled"],
+  queued: ["provisioning", "failed", "canceled"],
+  provisioning: ["planning", "failed", "canceled"],
   planning: ["awaiting_plan_approval", "failed", "canceled"],
-  awaiting_plan_approval: ["provisioning", "failed", "canceled"],
-  provisioning: ["editing", "failed", "canceled"],
+  awaiting_plan_approval: ["editing", "failed", "canceled"],
   editing: ["testing", "failed", "canceled"],
   testing: ["awaiting_publish_approval", "editing", "failed", "canceled"],
   awaiting_publish_approval: ["publishing", "failed", "canceled"],
@@ -62,9 +65,9 @@ export const TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
  */
 export const STATE_TIMEOUT_MS: Readonly<Record<JobState, number | null>> = {
   queued: 10 * 60_000,
-  planning: 5 * 60_000,
-  awaiting_plan_approval: 60 * 60_000,
   provisioning: 10 * 60_000,
+  planning: 10 * 60_000,
+  awaiting_plan_approval: 60 * 60_000,
   editing: 15 * 60_000,
   testing: 15 * 60_000,
   awaiting_publish_approval: 60 * 60_000,
@@ -74,7 +77,15 @@ export const STATE_TIMEOUT_MS: Readonly<Record<JobState, number | null>> = {
   canceled: null,
 };
 
-export type FailureReason = "timeout" | "error" | "checks_failed" | "repair_limit" | "agent_error" | "sprite_error" | "publish_error";
+export type FailureReason =
+  | "timeout"
+  | "error"
+  | "setup_error"
+  | "checks_failed"
+  | "repair_limit"
+  | "agent_error"
+  | "sprite_error"
+  | "publish_error";
 export type CancelReason = "user_canceled" | "plan_rejected" | "publish_rejected";
 
 export interface TransitionContext {
@@ -98,9 +109,9 @@ export function checkTransition(from: JobState, to: JobState, ctx: TransitionCon
 
 export const STATE_LABELS: Readonly<Record<JobState, string>> = {
   queued: "Queued",
+  provisioning: "Provisioning workspace",
   planning: "Planning",
   awaiting_plan_approval: "Awaiting plan approval",
-  provisioning: "Provisioning sprite",
   editing: "Editing",
   testing: "Testing",
   awaiting_publish_approval: "Awaiting publish approval",

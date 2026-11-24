@@ -118,6 +118,26 @@ export function JobStatus({ id }: { id: string }) {
               </dd>
             </>
           )}
+          {job.baseSha && (
+            <>
+              <dt className="text-zinc-500">Workspace</dt>
+              <dd className="font-mono text-xs leading-6">
+                {job.branchName} from {job.baseBranch}@
+                <a
+                  href={`https://github.com/${job.repoOwner}/${job.repoName}/commit/${job.baseSha}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  {job.baseSha.slice(0, 12)}
+                </a>
+                <br />
+                sprite {job.spriteName}
+                {job.checkpointId ? ` · checkpoint ${job.checkpointId}` : ""}
+                {job.workspace ? ` · ${job.workspace.packageManager === "npm" ? "npm" : "no package.json"}` : ""}
+              </dd>
+            </>
+          )}
           {job.error && (
             <>
               <dt className="text-zinc-500">Error</dt>
@@ -125,11 +145,7 @@ export function JobStatus({ id }: { id: string }) {
             </>
           )}
         </dl>
-        {job.state === "queued" && (
-          <p className="mt-4 text-sm text-zinc-500">
-            Queued. Analysis and Sprite execution are wired up in the next milestone.
-          </p>
-        )}
+
       </Panel>
       <Panel title="Events">
         {events.length === 0 ? (

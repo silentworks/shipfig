@@ -21,6 +21,15 @@ vi.mock("@/lib/env", async (importOriginal) => {
   };
 });
 
+// `after()` needs a live Next.js request; run the callback inline instead and
+// stub the runner so no sprite work starts.
+const background = vi.hoisted(() => ({ start: vi.fn() }));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: (cb: () => void) => cb(),
+}));
+vi.mock("@/lib/jobs/background", () => ({ startJobInBackground: background.start }));
+
 process.env.SHIPFIG_DB_PATH = ":memory:";
 
 const { listAllowedRepos, listOpenIssues, getAllowedIssue, RepoNotAllowedError } = await import("@/lib/github/connector");
@@ -146,6 +155,7 @@ describe("POST /api/jobs", () => {
     expect(res.status).toBe(201);
     const { job } = await res.json();
     expect(job).toMatchObject({ state: "queued", issueNumber: 5, issueTitle: "Issue 5", issueUrl: "https://github.com/acme/web/issues/5" });
+    expect(background.start).toHaveBeenCalledWith(job.id);
 
     const second = await post({ owner: "acme", repo: "web", issueNumber: 5 });
     expect(second.status).toBe(409);
