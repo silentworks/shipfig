@@ -2,7 +2,7 @@
 
 import type { Job, TestResult } from "@/lib/jobs/store";
 import type { VerificationOutcome } from "@/lib/verify/evidence";
-import { Panel } from "./ui";
+import { Muted, Panel } from "./ui";
 
 const OUTCOME: Record<VerificationOutcome, { label: string; tone: string; detail: string }> = {
   verified: {
@@ -76,111 +76,140 @@ function lineClass(line: string): string {
   return "";
 }
 
-/** Verification evidence: outcome, real check results, flags, review and the exact diff. */
-export function EvidenceView({ job }: { job: Job }) {
+/** Checks: outcome, real results after the change, baseline and server flags. */
+export function ChecksView({ job }: { job: Job }) {
   const v = job.verification;
-  if (!v && job.testResults.length === 0 && !job.diff) return null;
   const outcome = v ? OUTCOME[v.outcome] : null;
-
   return (
-    <Panel title="Verification">
-      <div className="flex flex-col gap-5">
-        {outcome && (
-          <div className={`rounded-md border p-3 text-sm ${outcome.tone}`}>
-            <p className="font-semibold">{outcome.label}</p>
-            <p>{outcome.detail}</p>
-          </div>
-        )}
-        <ResultsTable results={job.testResults} caption="Checks run by Shipfig after the change" />
-        <ResultsTable results={job.baselineResults} caption="Baseline (before any change)" />
-
-        {v && v.flags.length > 0 && (
-          <div>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Flags</h3>
-            <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
-              {v.flags.map((f, i) => (
-                <li key={i} className="break-words">
-                  {f}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {v && (v.review || v.reviewError) && (
-          <div>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Model review (can block, never approves)</h3>
-            {v.review ? (
-              <div className="text-sm">
-                <p className={v.review.verdict === "pass" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>Verdict: {v.review.verdict}</p>
-                {v.review.concerns.length > 0 && (
-                  <ul className="mt-1 list-disc pl-5">
-                    {v.review.concerns.map((c, i) => (
-                      <li key={i} className="break-words">
-                        {c}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {v.review.evidence.length > 0 && <p className="mt-1 text-xs text-zinc-500">Evidence: {v.review.evidence.join(" · ")}</p>}
-              </div>
-            ) : (
-              <p className="text-sm text-amber-800 dark:text-amber-300">Review unavailable: {v.reviewError}</p>
-            )}
-          </div>
-        )}
-
-        {job.diff && (
-          <div>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Diff{v ? ` · ${v.diff.files.length} file(s), +${v.diff.additions} −${v.diff.deletions}` : ""}
-            </h3>
-            {v && (
-              <ul className="mb-2 font-mono text-xs">
-                {v.diff.files.map((f) => (
-                  <li key={f.path}>
-                    {f.status.padEnd(8)} {f.path} {f.additions === null ? "(binary)" : `+${f.additions} −${f.deletions}`}
+    <Panel title="Checks">
+      {!v && job.testResults.length === 0 && job.baselineResults.length === 0 ? (
+        <Muted>{job.state === "editing" || job.state === "testing" ? "Running checks…" : "No checks have run yet."}</Muted>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {outcome && (
+            <div className={`rounded-md border p-3 text-sm ${outcome.tone}`}>
+              <p className="font-semibold">{outcome.label}</p>
+              <p>{outcome.detail}</p>
+            </div>
+          )}
+          <ResultsTable results={job.testResults} caption="Run by Shipfig after the change" />
+          <ResultsTable results={job.baselineResults} caption="Baseline (before any change)" />
+          {v && v.flags.length > 0 && (
+            <div>
+              <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Flags</h3>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
+                {v.flags.map((f, i) => (
+                  <li key={i} className="break-words">
+                    {f}
                   </li>
                 ))}
               </ul>
-            )}
-            <pre className="max-h-[36rem] overflow-auto rounded-md border border-zinc-200 font-mono text-xs leading-5 dark:border-zinc-800">
-              {job.diff.split("\n").map((line, i) => (
-                <div key={i} className={`whitespace-pre px-3 ${lineClass(line)}`}>
-                  {line || " "}
-                </div>
-              ))}
-            </pre>
-            {v && (
-              <p className="mt-1 font-mono text-[11px] text-zinc-500">
-                sha256 {v.diff.hash}
-                {v.diff.truncated ? " · diff truncated for display" : ""}
-              </p>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
 
-        {job.execution.length > 0 && (
-          <details className="text-sm">
-            <summary className="cursor-pointer text-zinc-600 dark:text-zinc-400">Executor attempts ({job.execution.length}): its own claims, not evidence</summary>
-            <ol className="mt-2 flex flex-col gap-2">
-              {job.execution.map((a) => {
-                const report = a.report as { summary?: string } | null;
-                return (
-                  <li key={a.attempt} className="rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
-                    <p className="font-medium">{a.attempt === 0 ? "First attempt" : `Repair ${a.attempt}`}</p>
-                    {report?.summary && <p className="whitespace-pre-wrap break-words">{report.summary}</p>}
-                    <p className="text-xs text-zinc-500">
-                      wrote {a.filesWritten.join(", ") || "nothing"}
-                      {a.refusals.length > 0 ? ` · refused: ${a.refusals.join("; ")}` : ""} · {a.usage.turns} turns
-                    </p>
+/** Model review of the real diff: can block, never approves. */
+export function ReviewView({ job }: { job: Job }) {
+  const v = job.verification;
+  if (!v || (!v.review && !v.reviewError)) return null;
+  return (
+    <Panel title="Review">
+      <div className="flex flex-col gap-2 text-sm">
+        <p className="text-xs text-zinc-500">A model review of the actual diff and results. It can block a change but never approves one.</p>
+        {v.review ? (
+          <>
+            <p className={`font-medium ${v.review.verdict === "pass" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}>Verdict: {v.review.verdict}</p>
+            {v.review.concerns.length > 0 ? (
+              <ul className="list-disc pl-5">
+                {v.review.concerns.map((c, i) => (
+                  <li key={i} className="break-words">
+                    {c}
                   </li>
-                );
-              })}
-            </ol>
-          </details>
+                ))}
+              </ul>
+            ) : (
+              <p>No concerns.</p>
+            )}
+            {v.review.evidence.length > 0 && (
+              <details>
+                <summary className="cursor-pointer text-zinc-600 dark:text-zinc-400">Evidence the review cites ({v.review.evidence.length})</summary>
+                <ul className="mt-1 list-disc pl-5 text-xs">
+                  {v.review.evidence.map((e, i) => (
+                    <li key={i} className="break-words">
+                      {e}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </>
+        ) : (
+          <p className="text-amber-800 dark:text-amber-300">Review unavailable: {v.reviewError}</p>
         )}
       </div>
     </Panel>
+  );
+}
+
+/** The exact diff the human reviews, with per-file stats and its sha256. */
+export function DiffView({ job }: { job: Job }) {
+  const v = job.verification;
+  if (!job.diff) return null;
+  return (
+    <Panel title={`Diff${v ? ` · ${v.diff.files.length} file(s), +${v.diff.additions} −${v.diff.deletions}` : ""}`}>
+      <div className="flex flex-col gap-2">
+        {v && (
+          <ul className="font-mono text-xs [overflow-wrap:anywhere]">
+            {v.diff.files.map((f) => (
+              <li key={f.path}>
+                <span className="inline-block w-20 text-zinc-500">{f.status}</span> {f.path} {f.additions === null ? "(binary)" : `+${f.additions} −${f.deletions}`}
+              </li>
+            ))}
+          </ul>
+        )}
+        <pre tabIndex={0} aria-label="Unified diff" className="max-h-[36rem] overflow-auto rounded-md border border-zinc-200 font-mono text-xs leading-5 dark:border-zinc-800">
+          {job.diff.split("\n").map((line, i) => (
+            <div key={i} className={`whitespace-pre px-3 ${lineClass(line)}`}>
+              {line || " "}
+            </div>
+          ))}
+        </pre>
+        {v && (
+          <p className="font-mono text-[11px] text-zinc-500 [overflow-wrap:anywhere]">
+            sha256 {v.diff.hash}
+            {v.diff.truncated ? " · diff truncated for display" : ""}
+          </p>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/** The executor's own reports: claims, not evidence. */
+export function ExecutorAttempts({ job }: { job: Job }) {
+  if (job.execution.length === 0) return null;
+  return (
+    <details className="rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <summary className="cursor-pointer font-medium">Executor attempts ({job.execution.length}): the agent&rsquo;s own claims, not evidence</summary>
+      <ol className="mt-2 flex flex-col gap-2">
+        {job.execution.map((a) => {
+          const report = a.report as { summary?: string } | null;
+          return (
+            <li key={a.attempt} className="rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
+              <p className="font-medium">{a.attempt === 0 ? "First attempt" : `Repair ${a.attempt}`}</p>
+              {report?.summary && <p className="whitespace-pre-wrap break-words">{report.summary}</p>}
+              <p className="text-xs text-zinc-500">
+                wrote {a.filesWritten.join(", ") || "nothing"}
+                {a.refusals.length > 0 ? ` · refused: ${a.refusals.join("; ")}` : ""} · {a.usage.turns} turns
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+    </details>
   );
 }

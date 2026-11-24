@@ -118,7 +118,14 @@ them return `503 not_configured`, and the error names the missing variable.
   one active job, bounded repairs and retries, per-state timeouts, and
   redacted events and evidence.
 - `app/api/*`: route handlers for repos, issues and jobs.
-- `app/page.tsx`: repo and issue picker. `app/jobs/[id]`: job status.
+- `app/page.tsx`: repo and issue picker, with a banner linking to the active
+  job. `app/jobs/[id]`: the job dashboard: a step timeline built from recorded
+  transitions (real timestamps and durations), live sprite status, plan and
+  publish approvals, the checks Shipfig ran (with baseline), the model
+  review, a terminal-style event log (filterable; everything was redacted
+  when recorded) and the exact diff with its sha256. It polls every 2s while
+  Shipfig works, every 6s while it waits for you, and not in a hidden tab.
+  `app/jobs`: job history, including failed and canceled jobs.
 
 Treat issue text and repository content as untrusted. They are rendered only
 as plain text, and every owner, repo, issue number, path and branch value is
