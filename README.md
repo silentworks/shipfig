@@ -15,7 +15,7 @@ verifies it, and opens a draft pull request only after you approve.
 ```bash
 npm install
 cp .env.example .env.local          # fill in SPRITES_TOKEN
-npm run connector -- list           # copy the conn_... id into SHIPFIG_GITHUB_CONNECTION_ID
+npm run connector -- list           # copy the id (first column) into SHIPFIG_GITHUB_CONNECTION_ID
 npm run connector -- apply-policy   # restrict the connector to the gateway sprite
 npm run spike -- <owner>/<repo> <issue-number>   # verify Sprites + connector end to end
 npm run dev                         # http://localhost:3000
