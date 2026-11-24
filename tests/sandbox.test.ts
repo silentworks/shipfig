@@ -57,3 +57,37 @@ describe("SpriteSandbox.run", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("SpriteSandbox.waitUntilSettled", () => {
+  /** PID 1 start times by probe: a restart (137 kill, then a new PID 1) before it settles. */
+  function restartingSprite(script: (Error | string)[]) {
+    let i = 0;
+    const sprite = {
+      name: "shipfig-job-test",
+      id: "s1",
+      async execFile() {
+        const step = script[Math.min(i++, script.length - 1)];
+        if (step instanceof Error) throw step;
+        return { exitCode: 0, stdout: `${step}\n`, stderr: "" };
+      },
+    } as unknown as Sprite;
+    return { sprite, probes: () => i };
+  }
+
+  it("waits through a container restart until PID 1 is stable", async () => {
+    const { sprite, probes } = restartingSprite(["3369", execError(137, ""), "6900"]);
+    const settled = await new SpriteSandbox(sprite, [0, 0]).waitUntilSettled({ windowMs: 30, pollMs: 5, timeoutMs: 2_000 });
+    expect(settled).toBe(true);
+    expect(probes()).toBeGreaterThan(3);
+  });
+
+  it("gives up after the timeout if PID 1 keeps changing", async () => {
+    let n = 0;
+    const sprite = {
+      name: "x",
+      id: "s1",
+      execFile: async () => ({ exitCode: 0, stdout: `${n++}\n`, stderr: "" }),
+    } as unknown as Sprite;
+    expect(await new SpriteSandbox(sprite, [0, 0]).waitUntilSettled({ windowMs: 30, pollMs: 5, timeoutMs: 100 })).toBe(false);
+  });
+});

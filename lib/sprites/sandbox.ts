@@ -76,6 +76,11 @@ export function isContainerMissing(stderr: string): boolean {
 /** Waits before each re-send of a command that hit a missing container. */
 export const CONTAINER_RETRY_DELAYS_MS = [2_000, 5_000] as const;
 
+/** How long PID 1 must stay the same before a new job sprite counts as settled. */
+export const SETTLE_WINDOW_MS = 4_000;
+const SETTLE_TIMEOUT_MS = 30_000;
+const SETTLE_POLL_MS = 500;
+
 export class SpriteSandbox implements Sandbox {
   constructor(
     private readonly sprite: Sprite,
@@ -127,6 +132,33 @@ export class SpriteSandbox implements Sandbox {
         throw error;
       }
     }
+  }
+
+  /**
+   * Applying policies to a new sprite restarts its container a second or two
+   * later; a command caught in that restart is killed (exit 137) or finds no
+   * container. Wait until PID 1 has kept the same start time for the settle
+   * window. Returns whether it settled; on timeout, callers carry on and the
+   * per-command retry still covers the missing-container case.
+   */
+  async waitUntilSettled(opts: { windowMs?: number; timeoutMs?: number; pollMs?: number } = {}): Promise<boolean> {
+    const windowMs = opts.windowMs ?? SETTLE_WINDOW_MS;
+    const deadline = Date.now() + (opts.timeoutMs ?? SETTLE_TIMEOUT_MS);
+    const pollMs = opts.pollMs ?? SETTLE_POLL_MS;
+    let current: string | null = null;
+    let since = 0;
+    while (Date.now() < deadline) {
+      const r = await this.run(["cut", "-d", " ", "-f22", "/proc/1/stat"], { timeoutMs: 10_000 });
+      const start = r.exitCode === 0 ? r.stdout.trim() : null;
+      if (start && start === current) {
+        if (Date.now() - since >= windowMs) return true;
+      } else {
+        current = start;
+        since = Date.now();
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return false;
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -195,7 +227,9 @@ export async function createJobSandbox(name: string): Promise<Sandbox> {
     await sprite.delete().catch(() => {});
     throw new Error(`Could not lock down job sprite ${name}: ${(error as Error).message}`);
   }
-  return new SpriteSandbox(sprite);
+  const sandbox = new SpriteSandbox(sprite);
+  await sandbox.waitUntilSettled();
+  return sandbox;
 }
 
 /** Reattach to a job's existing sprite (e.g. after a server restart). */
