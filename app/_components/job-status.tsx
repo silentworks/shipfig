@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AWAITING_HUMAN_STATES, type JobState, STATE_LABELS, isTerminal } from "@/lib/jobs/states";
 import type { Job, JobEvent } from "@/lib/jobs/store";
@@ -59,9 +60,9 @@ function useSpriteStatus(id: string, active: boolean) {
 }
 
 /**
- * Calm, human-readable job detail page. Keeps the primary decision and
- * human-friendly progress up front; tucks logs, SHAs, Sprite info, and agent
- * internals into a single collapsible "Technical details" section.
+ * Right-pane job detail canvas aligned with the Issue Detail view:
+ * sticky white header with status + 4-stage progress, scrollable body canvas
+ * with calm cards, and a single collapsed Technical details drawer.
  */
 export function JobStatus({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null);
@@ -136,7 +137,13 @@ export function JobStatus({ id }: { id: string }) {
     }
   }
 
-  if (!job) return error ? <ErrorNotice message={error} /> : <Loading label="Loading job" />;
+  if (!job) {
+    return (
+      <div className="p-6">
+        {error ? <ErrorNotice message={error} /> : <Loading label="Loading job" />}
+      </div>
+    );
+  }
 
   const canCancel = !isTerminal(job.state) && job.state !== "publishing";
   const canRetry = job.state === "failed";
@@ -148,196 +155,212 @@ export function JobStatus({ id }: { id: string }) {
   const reason = job.failureReason ?? job.cancelReason;
 
   return (
-    <div className="flex flex-col gap-5">
-      {error && <ErrorNotice message={error} />}
-
-      {/* Clean, human-readable header */}
-      <section
+    <div className="flex min-h-0 flex-1 flex-col md:overflow-hidden">
+      {/* Top white header — mirrors Issue Detail header */}
+      <header
         aria-labelledby="job-title"
-        className="rounded-xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950"
+        className="shrink-0 border-b border-zinc-200/80 bg-white px-6 py-4 dark:border-zinc-800/80 dark:bg-zinc-950"
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Link
+                href="/jobs"
+                className="text-zinc-500 hover:text-zinc-900 md:hidden dark:hover:text-zinc-100"
+              >
+                ← Jobs
+              </Link>
+              <StatusBadge tone={stateTone(job)}>
+                {STATE_LABELS[job.state]}
+                {reason ? ` · ${reason.replace(/_/g, " ")}` : ""}
+              </StatusBadge>
               <a
                 href={job.issueUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-medium hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
+                className="text-zinc-500 hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
               >
                 {job.repoOwner}/{job.repoName} #{job.issueNumber} ↗
               </a>
-              <span aria-hidden>·</span>
-              <time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString()}</time>
             </div>
-            <h1 id="job-title" className="mt-1.5 break-words text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+
+            <div className="flex flex-wrap items-center gap-2">
+              {job.prUrl && (
+                <a
+                  href={job.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-8 items-center rounded-md bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
+                >
+                  View PR #{job.publishResult?.prNumber ?? ""} ↗
+                </a>
+              )}
+              {canRetry && (
+                <Button variant="secondary" onClick={() => post("/retry")} disabled={busy}>
+                  {resumesPublish ? "Retry publish" : "Retry"}
+                </Button>
+              )}
+              {canCancel && (
+                <Button variant="ghost" onClick={() => post("/cancel")} disabled={busy}>
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <h1 id="job-title" className="break-words text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {job.issueTitle}
             </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{STATUS_SUMMARY[job.state]}</p>
+            <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{STATUS_SUMMARY[job.state]}</p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge tone={stateTone(job)}>
-              {STATE_LABELS[job.state]}
-              {reason ? ` · ${reason.replace(/_/g, " ")}` : ""}
-            </StatusBadge>
-            {job.prUrl && (
-              <a
-                href={job.prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex h-8 items-center rounded-md bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
-              >
-                View PR #{job.publishResult?.prNumber ?? ""} ↗
-              </a>
-            )}
-            {canRetry && (
-              <Button variant="secondary" onClick={() => post("/retry")} disabled={busy}>
-                {resumesPublish ? "Retry publish" : "Retry"}
-              </Button>
-            )}
-            {canCancel && (
-              <Button variant="ghost" onClick={() => post("/cancel")} disabled={busy}>
-                Cancel
-              </Button>
-            )}
+          <div className="pt-1">
+            <SimpleJobProgress state={job.state} steps={steps} />
           </div>
         </div>
+      </header>
 
-        <div className="mt-5 border-t border-zinc-100 pt-4 dark:border-zinc-900">
-          <SimpleJobProgress state={job.state} steps={steps} />
-        </div>
+      {/* Scrollable body canvas */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          {error && <ErrorNotice message={error} />}
 
-        {job.error && (
-          <div
-            role="alert"
-            className="mt-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3.5 py-2.5 text-sm text-red-800 [overflow-wrap:anywhere] dark:text-red-200"
-          >
-            <span className="font-medium">Error: </span>
-            {job.error}
-          </div>
-        )}
-      </section>
-
-      {/* Primary content: focused on the current stage */}
-      {inReviewOrDone ? (
-        <>
-          <PublishView
-            job={job}
-            busy={busy}
-            onDecision={(decision, acknowledgeUnverified) =>
-              post("/publish", { decision, version: job.version, diffHash: job.diffHash ?? undefined, acknowledgeUnverified })
-            }
-          />
-          <ChecksView job={job} />
-          {reviewFlagged && <ReviewView job={job} />}
-          <DiffView job={job} />
-          {job.plan && (
-            <PlanView
-              job={job}
-              busy={busy}
-              collapsible
-              onDecision={(decision) => post("/plan", { decision, version: job.version })}
-            />
+          {job.error && (
+            <div
+              role="alert"
+              className="rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-800 [overflow-wrap:anywhere] dark:text-red-200"
+            >
+              <span className="font-medium">Error: </span>
+              {job.error}
+            </div>
           )}
-        </>
-      ) : (
-        <>
-          {job.plan ? (
-            <PlanView
-              job={job}
-              busy={busy}
-              highlightApproval={awaitingPlan}
-              onDecision={(decision) => post("/plan", { decision, version: job.version })}
-            />
+
+          {inReviewOrDone ? (
+            <>
+              <PublishView
+                job={job}
+                busy={busy}
+                onDecision={(decision, acknowledgeUnverified) =>
+                  post("/publish", { decision, version: job.version, diffHash: job.diffHash ?? undefined, acknowledgeUnverified })
+                }
+              />
+              <ChecksView job={job} />
+              {reviewFlagged && <ReviewView job={job} />}
+              <DiffView job={job} />
+              {job.plan && (
+                <PlanView
+                  job={job}
+                  busy={busy}
+                  collapsible
+                  onDecision={(decision) => post("/plan", { decision, version: job.version })}
+                />
+              )}
+            </>
           ) : (
-            <Panel title="Plan">
-              <p className="text-sm text-zinc-500">
-                {job.state === "planning"
-                  ? "Reading the repository and drafting a plan…"
-                  : job.state === "provisioning" || job.state === "queued"
-                    ? "Preparing an isolated workspace before drafting the plan…"
-                    : "No plan was generated for this run."}
-              </p>
-            </Panel>
+            <>
+              {job.plan ? (
+                <PlanView
+                  job={job}
+                  busy={busy}
+                  highlightApproval={awaitingPlan}
+                  onDecision={(decision) => post("/plan", { decision, version: job.version })}
+                />
+              ) : (
+                <Panel title="Plan">
+                  <p className="text-sm text-zinc-500">
+                    {job.state === "planning"
+                      ? "Reading the repository and drafting a plan…"
+                      : job.state === "provisioning" || job.state === "queued"
+                        ? "Preparing an isolated workspace before drafting the plan…"
+                        : "No plan was generated for this run."}
+                  </p>
+                </Panel>
+              )}
+              {(job.verification || job.testResults.length > 0 || job.state === "editing" || job.state === "testing") && (
+                <ChecksView job={job} />
+              )}
+              {reviewFlagged && <ReviewView job={job} />}
+              <DiffView job={job} />
+            </>
           )}
-          {(job.verification || job.testResults.length > 0 || job.state === "editing" || job.state === "testing") && (
-            <ChecksView job={job} />
-          )}
-          {reviewFlagged && <ReviewView job={job} />}
-          <DiffView job={job} />
-        </>
-      )}
 
-      {/* Single collapsible drawer for all technical/ops metadata and logs */}
-      <CollapsiblePanel
-        title="Technical details"
-        summary="Run metadata, step timings, and activity log"
-        defaultOpen={job.state === "failed"}
-      >
-        <div className="flex flex-col gap-5">
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-[9rem_1fr]">
-            <dt className="text-zinc-500">Job ID</dt>
-            <dd className="font-mono text-zinc-800 dark:text-zinc-200">{job.id}</dd>
+          {/* Single collapsible drawer for all technical/ops metadata and logs */}
+          <CollapsiblePanel
+            title="Technical details"
+            summary="Run metadata, step timings, and activity log"
+            defaultOpen={job.state === "failed"}
+          >
+            <div className="flex flex-col gap-5">
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-[9rem_1fr]">
+                <dt className="text-zinc-500">Job ID</dt>
+                <dd className="font-mono text-zinc-800 dark:text-zinc-200">{job.id}</dd>
 
-            <dt className="text-zinc-500">Attempts</dt>
-            <dd className="text-zinc-800 dark:text-zinc-200">
-              Attempt {job.attempt} · {job.retryCount} automated {job.retryCount === 1 ? "repair" : "repairs"}
-            </dd>
+                <dt className="text-zinc-500">Created</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">
+                  <time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString()}</time>
+                </dd>
 
-            {job.baseSha && (
-              <>
-                <dt className="text-zinc-500">Branch &amp; base</dt>
+                <dt className="text-zinc-500">Attempts</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">
+                  Attempt {job.attempt} · {job.retryCount} automated {job.retryCount === 1 ? "repair" : "repairs"}
+                </dd>
+
+                {job.baseSha && (
+                  <>
+                    <dt className="text-zinc-500">Branch &amp; base</dt>
+                    <dd className="font-mono text-zinc-800 dark:text-zinc-200">
+                      {job.branchName} from {job.baseBranch}@
+                      <a
+                        href={`https://github.com/${job.repoOwner}/${job.repoName}/commit/${job.baseSha}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline underline-offset-2"
+                      >
+                        {job.baseSha.slice(0, 12)}
+                      </a>
+                      {job.checkpointId ? ` · checkpoint ${job.checkpointId}` : ""}
+                    </dd>
+                  </>
+                )}
+
+                <dt className="text-zinc-500">Workspace Sprite</dt>
                 <dd className="font-mono text-zinc-800 dark:text-zinc-200">
-                  {job.branchName} from {job.baseBranch}@
-                  <a
-                    href={`https://github.com/${job.repoOwner}/${job.repoName}/commit/${job.baseSha}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline underline-offset-2"
-                  >
-                    {job.baseSha.slice(0, 12)}
-                  </a>
-                  {job.checkpointId ? ` · checkpoint ${job.checkpointId}` : ""}
+                  {job.spriteName ?? "—"}
+                  {sprite ? ` · ${sprite.status}` : ""}
                 </dd>
-              </>
-            )}
 
-            <dt className="text-zinc-500">Workspace Sprite</dt>
-            <dd className="font-mono text-zinc-800 dark:text-zinc-200">
-              {job.spriteName ?? "—"}
-              {sprite ? ` · ${sprite.status}` : ""}
-            </dd>
+                {job.deadlineAt && (
+                  <>
+                    <dt className="text-zinc-500">Timeout</dt>
+                    <dd className="text-zinc-800 dark:text-zinc-200">
+                      <time dateTime={job.deadlineAt}>{new Date(job.deadlineAt).toLocaleString()}</time>
+                    </dd>
+                  </>
+                )}
 
-            {job.deadlineAt && (
-              <>
-                <dt className="text-zinc-500">Timeout</dt>
-                <dd className="text-zinc-800 dark:text-zinc-200">
-                  <time dateTime={job.deadlineAt}>{new Date(job.deadlineAt).toLocaleString()}</time>
-                </dd>
-              </>
-            )}
+                {job.finishedAt && (
+                  <>
+                    <dt className="text-zinc-500">Finished</dt>
+                    <dd className="text-zinc-800 dark:text-zinc-200">
+                      <time dateTime={job.finishedAt}>{new Date(job.finishedAt).toLocaleString()}</time>
+                    </dd>
+                  </>
+                )}
+              </dl>
 
-            {job.finishedAt && (
-              <>
-                <dt className="text-zinc-500">Finished</dt>
-                <dd className="text-zinc-800 dark:text-zinc-200">
-                  <time dateTime={job.finishedAt}>{new Date(job.finishedAt).toLocaleString()}</time>
-                </dd>
-              </>
-            )}
-          </dl>
+              <div className="border-t border-zinc-100 pt-4 dark:border-zinc-900">
+                <h3 className="mb-3 text-xs font-medium text-zinc-500">Step timings</h3>
+                <JobTimeline steps={steps} now={now} />
+              </div>
 
-          <div className="border-t border-zinc-100 pt-4 dark:border-zinc-900">
-            <h3 className="mb-3 text-xs font-medium text-zinc-500">Step timings</h3>
-            <JobTimeline steps={steps} now={now} />
-          </div>
-
-          {!reviewFlagged && <ReviewView job={job} />}
-          <EventLog events={events} defaultOpen={job.state === "failed"} />
-          <ExecutorAttempts job={job} />
+              {!reviewFlagged && <ReviewView job={job} />}
+              <EventLog events={events} defaultOpen={job.state === "failed"} />
+              <ExecutorAttempts job={job} />
+            </div>
+          </CollapsiblePanel>
         </div>
-      </CollapsiblePanel>
+      </div>
     </div>
   );
 }

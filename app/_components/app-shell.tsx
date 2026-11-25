@@ -335,12 +335,7 @@ function MobileNavDynamic() {
 }
 
 function MainFrame({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  const isIssuesWorkspace = pathname === "/";
-  if (isIssuesWorkspace) {
-    return <main className="flex min-h-0 flex-1 flex-col">{children}</main>;
-  }
-  return <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">{children}</main>;
+  return <main className="flex min-h-0 flex-1 flex-col">{children}</main>;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
