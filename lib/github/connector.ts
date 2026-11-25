@@ -3,6 +3,7 @@ import { serverEnv } from "@/lib/env";
 import { githubGatewayRequest } from "@/lib/sprites/gateway";
 import { type IssueRef, type RepoRef, branchNameSchema, issueRefSchema, pathSegment, repoRefSchema, repoSlug } from "@/lib/validation";
 import { type Issue, type Repo, githubIssueSchema, githubRepoSchema, githubUserSchema, toIssue, toRepo } from "./schemas";
+import type { GitHubRequestFn } from "./user-client";
 
 /**
  * Typed GitHub operations over the Sprites connector gateway. Every input is
@@ -24,20 +25,20 @@ export class RepoNotAllowedError extends Error {
   }
 }
 
-export async function getViewer(): Promise<{ login: string; url: string }> {
-  const { data } = await githubGatewayRequest("/user");
+export async function getViewer(request: GitHubRequestFn = githubGatewayRequest): Promise<{ login: string; url: string }> {
+  const { data } = await request("/user");
   const user = githubUserSchema.parse(data);
   return { login: user.login, url: user.html_url };
 }
 
-export async function getRepo(ref: RepoRef): Promise<Repo> {
-  const { data } = await githubGatewayRequest(repoPath(ref));
+export async function getRepo(ref: RepoRef, request: GitHubRequestFn = githubGatewayRequest): Promise<Repo> {
+  const { data } = await request(repoPath(ref));
   return toRepo(githubRepoSchema.parse(data));
 }
 
-export async function getIssue(ref: IssueRef): Promise<Issue> {
+export async function getIssue(ref: IssueRef, request: GitHubRequestFn = githubGatewayRequest): Promise<Issue> {
   const { issueNumber, ...repo } = issueRefSchema.parse(ref);
-  const { data } = await githubGatewayRequest(`${repoPath(repo)}/issues/${pathSegment(issueNumber)}`);
+  const { data } = await request(`${repoPath(repo)}/issues/${pathSegment(issueNumber)}`);
   const raw = githubIssueSchema.parse(data);
   if (raw.pull_request !== undefined) {
     throw new Error(`#${issueNumber} is a pull request, not an issue`);
@@ -71,7 +72,7 @@ export interface RepoListing {
  * Repositories the user may pick. With an allowlist, exactly those repos are
  * fetched; otherwise the connected account's repos are listed.
  */
-export async function listAllowedRepos(): Promise<RepoListing> {
+export async function listAllowedRepos(request: GitHubRequestFn = githubGatewayRequest): Promise<RepoListing> {
   const allowlist = serverEnv().SHIPFIG_ALLOWED_REPOS;
   let candidates: Repo[];
   const excluded: RepoListing["excluded"] = [];
@@ -80,7 +81,7 @@ export async function listAllowedRepos(): Promise<RepoListing> {
     const results = await Promise.allSettled(
       allowlist.map((slug) => {
         const [owner, repo] = slug.split("/");
-        return getRepo({ owner, repo });
+        return getRepo({ owner, repo }, request);
       }),
     );
     candidates = [];
@@ -89,7 +90,7 @@ export async function listAllowedRepos(): Promise<RepoListing> {
       else excluded.push({ fullName: allowlist[i], reason: r.reason instanceof Error ? r.reason.message : "could not be loaded" });
     });
   } else {
-    const { data } = await githubGatewayRequest("/user/repos", {
+    const { data } = await request("/user/repos", {
       query: { per_page: 100, sort: "updated", affiliation: "owner,collaborator,organization_member" },
     });
     candidates = z.array(githubRepoSchema).parse(data).map(toRepo);
@@ -106,21 +107,21 @@ export async function listAllowedRepos(): Promise<RepoListing> {
 }
 
 /** Fetch a repo and throw unless Shipfig may operate on it. */
-export async function getAllowedRepo(ref: RepoRef): Promise<Repo> {
+export async function getAllowedRepo(ref: RepoRef, request: GitHubRequestFn = githubGatewayRequest): Promise<Repo> {
   const allowlist = serverEnv().SHIPFIG_ALLOWED_REPOS;
   const slug = repoSlug(repoRefSchema.parse(ref));
   // Check the allowlist before making any request for a non-allowlisted repo.
   if (!isAllowlisted(ref, allowlist)) throw new RepoNotAllowedError(slug, "not in SHIPFIG_ALLOWED_REPOS");
-  const repo = await getRepo(ref);
+  const repo = await getRepo(ref, request);
   const verdict = eligibility(repo, allowlist);
   if (!verdict.ok) throw new RepoNotAllowedError(slug, verdict.reason);
   return repo;
 }
 
 /** Open issues (pull requests excluded), most recently updated first. */
-export async function listOpenIssues(ref: RepoRef): Promise<Issue[]> {
-  await getAllowedRepo(ref);
-  const { data } = await githubGatewayRequest(`${repoPath(ref)}/issues`, {
+export async function listOpenIssues(ref: RepoRef, request: GitHubRequestFn = githubGatewayRequest): Promise<Issue[]> {
+  await getAllowedRepo(ref, request);
+  const { data } = await request(`${repoPath(ref)}/issues`, {
     query: { state: "open", per_page: 50, sort: "updated", direction: "desc" },
   });
   return z
@@ -131,19 +132,19 @@ export async function listOpenIssues(ref: RepoRef): Promise<Issue[]> {
 }
 
 /** A single issue from an allowed repo. */
-export async function getAllowedIssue(ref: IssueRef): Promise<Issue> {
+export async function getAllowedIssue(ref: IssueRef, request: GitHubRequestFn = githubGatewayRequest): Promise<Issue> {
   const parsed = issueRefSchema.parse(ref);
-  await getAllowedRepo(parsed);
-  return getIssue(parsed);
+  await getAllowedRepo(parsed, request);
+  return getIssue(parsed, request);
 }
 
 const gitRefSchema = z.object({ object: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/), type: z.string() }) });
 
 /** Current head commit SHA of a branch (used to pin the job's base commit). */
-export async function getBranchHeadSha(ref: RepoRef, branch: string): Promise<string> {
+export async function getBranchHeadSha(ref: RepoRef, branch: string, request: GitHubRequestFn = githubGatewayRequest): Promise<string> {
   const name = branchNameSchema.parse(branch);
   const path = `${repoPath(ref)}/git/ref/heads/${name.split("/").map(pathSegment).join("/")}`;
-  const { data } = await githubGatewayRequest(path);
+  const { data } = await request(path);
   const parsed = gitRefSchema.parse(data);
   if (parsed.object.type !== "commit") throw new Error(`refs/heads/${name} does not point at a commit`);
   return parsed.object.sha;

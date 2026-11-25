@@ -62,6 +62,8 @@ export interface Job {
   issueNumber: number;
   issueTitle: string;
   issueUrl: string;
+  /** Signed-in Better Auth user who started the job, or null for operator-token jobs. */
+  createdByUserId: string | null;
   state: JobState;
   failureReason: FailureReason | null;
   cancelReason: CancelReason | null;
@@ -182,6 +184,7 @@ export interface TransitionOptions {
 export interface NewJobInput extends IssueRef {
   issueTitle: string;
   issueUrl: string;
+  createdByUserId?: string | null;
 }
 
 type Row = Record<string, string | number | null>;
@@ -210,6 +213,7 @@ function rowToJob(row: Row): Job {
     issueNumber: Number(row.issue_number),
     issueTitle: String(row.issue_title),
     issueUrl: String(row.issue_url),
+    createdByUserId: (row.created_by_user_id as string | null) ?? null,
     state,
     failureReason: (row.failure_reason as FailureReason | null) ?? null,
     cancelReason: (row.cancel_reason as CancelReason | null) ?? null,
@@ -342,9 +346,9 @@ export class JobStore {
         if (active) throw new ActiveJobExistsError(active.id);
         this.db
           .prepare(
-            `INSERT INTO jobs (id, repo_owner, repo_name, issue_number, issue_title, issue_url, state, active,
+            `INSERT INTO jobs (id, repo_owner, repo_name, issue_number, issue_title, issue_url, created_by_user_id, state, active,
                sprite_name, created_at, updated_at, state_entered_at, deadline_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?)`,
           )
           .run(
             id,
@@ -353,6 +357,7 @@ export class JobStore {
             ref.issueNumber,
             sanitizeOutput(input.issueTitle, 500),
             input.issueUrl,
+            input.createdByUserId ?? null,
             spriteNameForJob(id),
             at,
             at,
