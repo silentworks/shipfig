@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { Repo } from "@/lib/github/schemas";
 import { AWAITING_HUMAN_STATES, STATE_LABELS } from "@/lib/jobs/states";
 import type { Job } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
@@ -104,7 +105,7 @@ function ThemeSelector({ mode, onChange }: { mode: ThemeMode; onChange: (mode: T
     <div
       role="radiogroup"
       aria-label="Color theme"
-      className="grid grid-cols-3 gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-100/70 p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+      className="grid grid-cols-3 gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-100/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
     >
       {options.map((opt) => {
         const active = mode === opt.value;
@@ -130,8 +131,8 @@ function ThemeSelector({ mode, onChange }: { mode: ThemeMode; onChange: (mode: T
   );
 }
 
-function useActiveJob() {
-  const [job, setJob] = useState<Job | null>(null);
+function useJobsOverview() {
+  const [data, setData] = useState<{ activeJob: Job | null; totalJobs: number }>({ activeJob: null, totalJobs: 0 });
 
   useEffect(() => {
     let stopped = false;
@@ -143,8 +144,13 @@ function useActiveJob() {
         return;
       }
       try {
-        const data = await fetchJson<{ jobs: Job[]; activeJobId: string | null }>("/api/jobs");
-        if (!stopped) setJob(data.jobs.find((j) => j.id === data.activeJobId) ?? null);
+        const res = await fetchJson<{ jobs: Job[]; activeJobId: string | null }>("/api/jobs");
+        if (!stopped) {
+          setData({
+            activeJob: res.jobs.find((j) => j.id === res.activeJobId) ?? null,
+            totalJobs: res.jobs.length,
+          });
+        }
       } catch {
         // Keep last known state on transient failure.
       }
@@ -158,60 +164,34 @@ function useActiveJob() {
     };
   }, []);
 
-  return job;
+  return data;
 }
 
-function Breadcrumbs() {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const repo = searchParams.get("repo");
-  const issue = searchParams.get("issue");
+function useSidebarRepos() {
+  const [repos, setRepos] = useState<Repo[]>([]);
 
-  if (pathname === "/") {
-    return (
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500">
-        <Link href="/" className="font-medium text-zinc-900 hover:underline dark:text-zinc-100">
-          Issues
-        </Link>
-        {repo && (
-          <>
-            <span aria-hidden className="text-zinc-300 dark:text-zinc-700">/</span>
-            <Link href={`/?repo=${encodeURIComponent(repo)}`} className="truncate hover:text-zinc-900 dark:hover:text-zinc-100">
-              {repo}
-            </Link>
-          </>
-        )}
-        {repo && issue && (
-          <>
-            <span aria-hidden className="text-zinc-300 dark:text-zinc-700">/</span>
-            <span className="text-zinc-900 dark:text-zinc-100">#{issue}</span>
-          </>
-        )}
-      </nav>
-    );
-  }
+  useEffect(() => {
+    let cancelled = false;
+    fetchJson<{ repos: Repo[] }>("/api/repos")
+      .then((res) => {
+        if (!cancelled) setRepos(res.repos);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  if (pathname === "/jobs") {
-    return (
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs">
-        <span className="font-medium text-zinc-900 dark:text-zinc-100">Jobs</span>
-      </nav>
-    );
-  }
-
-  if (pathname.startsWith("/jobs/")) {
-    return (
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500">
-        <Link href="/jobs" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-          Jobs
-        </Link>
-        <span aria-hidden className="text-zinc-300 dark:text-zinc-700">/</span>
-        <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">Job details</span>
-      </nav>
-    );
-  }
-
-  return null;
+  return useMemo(() => {
+    const groups = new Map<string, Repo[]>();
+    for (const r of repos) {
+      const [owner] = r.fullName.split("/");
+      const list = groups.get(owner) ?? [];
+      list.push(r);
+      groups.set(owner, list);
+    }
+    return Array.from(groups.entries());
+  }, [repos]);
 }
 
 const NAV_ITEMS = [
@@ -238,46 +218,106 @@ const NAV_ITEMS = [
   },
 ];
 
-function SidebarNav({ pathname }: { pathname: string | null }) {
+function SidebarContent({
+  pathname,
+  selectedRepo,
+  repoGroups,
+  totalJobs,
+}: {
+  pathname: string | null;
+  selectedRepo: string | null;
+  repoGroups: [string, Repo[]][];
+  totalJobs: number;
+}) {
   return (
-    <nav aria-label="Main" className="flex flex-col gap-0.5 px-2.5">
-      {NAV_ITEMS.map((item) => {
-        const active = pathname !== null && item.isActive(pathname);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={active ? "page" : undefined}
-            className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors ${
-              active
-                ? "bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800/80 dark:text-zinc-100"
-                : "text-zinc-600 hover:bg-zinc-200/40 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
-            }`}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </Link>
-        );
-      })}
-    </nav>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <nav aria-label="Main" className="flex flex-col gap-0.5 px-2.5 pt-2">
+        {NAV_ITEMS.map((item) => {
+          const active = pathname !== null && item.isActive(pathname);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              className={`flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
+                active
+                  ? "bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800/80 dark:text-zinc-100"
+                  : "text-zinc-600 hover:bg-zinc-200/40 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                {item.icon}
+                <span>{item.label}</span>
+              </span>
+              {item.href === "/jobs" && totalJobs > 0 && (
+                <span className="text-xs font-normal text-zinc-400 dark:text-zinc-500">{totalJobs}</span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Repositories grouped by owner — GitScout-style hierarchy */}
+      {repoGroups.length > 0 && (
+        <div className="mt-4 border-t border-zinc-200/70 px-3 pt-4 dark:border-zinc-800/70">
+          <div className="flex flex-col gap-4">
+            {repoGroups.map(([owner, repos]) => (
+              <div key={owner} className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 px-1">
+                  <span
+                    aria-hidden
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-[9px] font-bold uppercase text-white dark:bg-zinc-200 dark:text-zinc-900"
+                  >
+                    {owner.slice(0, 1)}
+                  </span>
+                  <span className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200">{owner}</span>
+                </div>
+                <ul className="flex flex-col gap-0.5 pl-6">
+                  {repos.map((r) => {
+                    const name = r.fullName.split("/")[1] ?? r.fullName;
+                    const active = pathname === "/" && selectedRepo === r.fullName;
+                    return (
+                      <li key={r.fullName}>
+                        <Link
+                          href={`/?repo=${encodeURIComponent(r.fullName)}`}
+                          aria-current={active ? "location" : undefined}
+                          className={`block truncate rounded-md px-1.5 py-1 text-[13px] transition-colors ${
+                            active
+                              ? "font-medium text-sky-600 dark:text-sky-400"
+                              : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                          }`}
+                        >
+                          {name}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-function SidebarNavDynamic() {
+function SidebarContentDynamic({ repoGroups, totalJobs }: { repoGroups: [string, Repo[]][]; totalJobs: number }) {
   const pathname = usePathname();
-  return <SidebarNav pathname={pathname} />;
+  const searchParams = useSearchParams();
+  return <SidebarContent pathname={pathname} selectedRepo={searchParams.get("repo")} repoGroups={repoGroups} totalJobs={totalJobs} />;
 }
 
 function MobileNav({ pathname }: { pathname: string | null }) {
   return (
-    <nav aria-label="Mobile" className="flex items-center gap-2 text-xs md:hidden">
+    <nav aria-label="Mobile" className="flex items-center gap-1.5 text-xs md:hidden">
       {NAV_ITEMS.map((item) => {
         const active = pathname !== null && item.isActive(pathname);
         return (
           <Link
             key={item.href}
             href={item.href}
-            className={`rounded px-2 py-1 font-medium ${
+            className={`rounded-md px-2 py-1 font-medium ${
               active ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100" : "text-zinc-500"
             }`}
           >
@@ -294,8 +334,18 @@ function MobileNavDynamic() {
   return <MobileNav pathname={pathname} />;
 }
 
+function MainFrame({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const isIssuesWorkspace = pathname === "/";
+  if (isIssuesWorkspace) {
+    return <main className="flex min-h-0 flex-1 flex-col">{children}</main>;
+  }
+  return <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">{children}</main>;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
-  const activeJob = useActiveJob();
+  const { activeJob, totalJobs } = useJobsOverview();
+  const repoGroups = useSidebarRepos();
   const { mode, selectMode } = useThemeMode();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -313,40 +363,32 @@ export function AppShell({ children }: { children: ReactNode }) {
   const needsYou = activeJob ? AWAITING_HUMAN_STATES.has(activeJob.state) : false;
 
   return (
-    <div className="flex min-h-screen flex-col md:flex-row">
-      {/* Persistent Linear-style sidebar (desktop) */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-zinc-200/80 bg-zinc-50/70 md:flex dark:border-zinc-800/80 dark:bg-zinc-950/70">
-        <div className="flex h-12 items-center gap-2 border-b border-zinc-200/80 px-4 dark:border-zinc-800/80">
+    <div className="flex min-h-screen flex-col md:h-screen md:flex-row md:overflow-hidden">
+      {/* Column 1: Persistent sidebar */}
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-zinc-200/80 bg-zinc-50/80 md:flex dark:border-zinc-800/80 dark:bg-zinc-950">
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200/80 px-3.5 dark:border-zinc-800/80">
           <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-900 text-[11px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
               S
             </span>
             <span>Shipfig</span>
           </Link>
-        </div>
-
-        <div className="p-2.5">
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            className="flex w-full items-center justify-between gap-2 rounded-md border border-zinc-200/80 bg-white px-2.5 py-1.5 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-200"
+            title="Jump to… (⌘K)"
+            aria-label="Open command palette"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-zinc-400 transition-colors hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
           >
-            <span className="flex items-center gap-2">
-              <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
-                <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              <span>Jump to…</span>
-            </span>
             <Kbd>⌘K</Kbd>
           </button>
         </div>
 
-        <Suspense fallback={<SidebarNav pathname={null} />}>
-          <SidebarNavDynamic />
+        <Suspense fallback={<SidebarContent pathname={null} selectedRepo={null} repoGroups={repoGroups} totalJobs={totalJobs} />}>
+          <SidebarContentDynamic repoGroups={repoGroups} totalJobs={totalJobs} />
         </Suspense>
 
-        <div className="mt-auto flex flex-col gap-2.5 p-2.5">
+        <div className="mt-auto flex shrink-0 flex-col gap-2.5 border-t border-zinc-200/70 p-2.5 dark:border-zinc-800/70">
           {activeJob && (
             <Link
               href={`/jobs/${activeJob.id}`}
@@ -372,12 +414,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Main content area */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-12 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/85 px-4 backdrop-blur-md dark:border-zinc-800/80 dark:bg-zinc-950/85">
+      {/* Right side: mobile header + main workspace */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col md:overflow-y-auto">
+        <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/90 px-4 backdrop-blur-md md:hidden dark:border-zinc-800/80 dark:bg-zinc-950/90">
           <div className="flex min-w-0 items-center gap-3">
-            {/* Mobile brand & nav */}
-            <Link href="/" className="flex items-center gap-1.5 text-sm font-semibold tracking-tight md:hidden">
+            <Link href="/" className="flex items-center gap-1.5 text-sm font-semibold tracking-tight">
               <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-900 text-[11px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
                 S
               </span>
@@ -386,33 +427,27 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Suspense fallback={<MobileNav pathname={null} />}>
               <MobileNavDynamic />
             </Suspense>
-
-            <div className="hidden min-w-0 md:block">
-              <Suspense fallback={null}>
-                <Breadcrumbs />
-              </Suspense>
-            </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {activeJob && (
               <Link
                 href={`/jobs/${activeJob.id}`}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium md:hidden ${
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                   needsYou
                     ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
                     : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                 }`}
               >
                 <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${needsYou ? "bg-amber-500" : "bg-sky-500 animate-pulse"}`} />
-                <span>{needsYou ? "Approval needed" : "Active job"}</span>
+                <span>{needsYou ? "Approve" : "Active"}</span>
               </Link>
             )}
             <button
               type="button"
               onClick={() => selectMode(mode === "dark" ? "light" : "dark")}
               aria-label="Toggle color theme"
-              className="inline-flex h-7 items-center rounded-md border border-zinc-200/80 px-2 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:text-zinc-800 md:hidden dark:border-zinc-800 dark:text-zinc-400"
+              className="inline-flex h-7 items-center rounded-md border border-zinc-200/80 px-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
             >
               {mode === "dark" ? "Light" : "Dark"}
             </button>
@@ -420,15 +455,16 @@ export function AppShell({ children }: { children: ReactNode }) {
               type="button"
               onClick={() => setPaletteOpen(true)}
               aria-label="Open command palette"
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200/80 px-2 py-1 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:text-zinc-800 md:hidden dark:border-zinc-800 dark:text-zinc-400"
+              className="inline-flex h-7 items-center rounded-md border border-zinc-200/80 px-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
             >
-              <span>Search</span>
-              <Kbd>⌘K</Kbd>
+              ⌘K
             </button>
           </div>
         </header>
 
-        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">{children}</main>
+        <Suspense fallback={<main className="flex min-h-0 flex-1 flex-col">{children}</main>}>
+          <MainFrame>{children}</MainFrame>
+        </Suspense>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
