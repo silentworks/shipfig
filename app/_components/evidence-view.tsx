@@ -2,102 +2,104 @@
 
 import type { Job, TestResult } from "@/lib/jobs/store";
 import type { VerificationOutcome } from "@/lib/verify/evidence";
-import { Muted, Panel } from "./ui";
+import { type BadgeTone, CollapsiblePanel, Muted, Panel, StatusBadge } from "./ui";
 
-const OUTCOME: Record<VerificationOutcome, { label: string; tone: string; detail: string }> = {
+const OUTCOME: Record<VerificationOutcome, { label: string; badge: BadgeTone; detail: string }> = {
   verified: {
-    label: "Verified",
-    tone: "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
-    detail: "Every requested check ran and exited 0.",
+    label: "All checks passed",
+    badge: "completed",
+    detail: "Every verification check ran and passed.",
   },
   unverified: {
-    label: "Unverified",
-    tone: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200",
-    detail: "Nothing failed, but some requested checks could not run. Missing checks are not passing checks.",
+    label: "Partially verified",
+    badge: "waiting",
+    detail: "Nothing failed, but some checks were not available to run.",
   },
   failed: {
     label: "Checks failed",
-    tone: "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200",
-    detail: "At least one check did not exit 0.",
+    badge: "failed",
+    detail: "One or more checks did not pass.",
   },
 };
 
-const STATUS: Record<TestResult["status"], string> = {
-  passed: "text-emerald-700 dark:text-emerald-300",
-  failed: "text-red-700 dark:text-red-300",
-  timed_out: "text-red-700 dark:text-red-300",
-  not_run: "text-amber-700 dark:text-amber-300",
+const RESULT_BADGE: Record<TestResult["status"], { label: string; tone: BadgeTone }> = {
+  passed: { label: "Passed", tone: "completed" },
+  failed: { label: "Failed", tone: "failed" },
+  timed_out: { label: "Timed out", tone: "failed" },
+  not_run: { label: "Not run", tone: "waiting" },
 };
 
-function ResultsTable({ results, caption }: { results: TestResult[]; caption: string }) {
+function friendlyCheckName(command: string[]): string {
+  // Turn `npm run typecheck` into `typecheck`, `npm test` into `test`.
+  if (command[0] === "npm" && command[1] === "run" && command[2]) return command.slice(2).join(" ");
+  if (command[0] === "npm" && command[1]) return command.slice(1).join(" ");
+  return command.join(" ");
+}
+
+function ChecksList({ results }: { results: TestResult[] }) {
   if (results.length === 0) return null;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <caption className="mb-1 text-left text-xs font-medium uppercase tracking-wide text-zinc-500">{caption}</caption>
-        <thead className="text-xs text-zinc-500">
-          <tr>
-            <th className="py-1 pr-4 font-medium">Command</th>
-            <th className="py-1 pr-4 font-medium">Result</th>
-            <th className="py-1 pr-4 font-medium">Exit</th>
-            <th className="py-1 pr-4 font-medium">Time</th>
-            <th className="py-1 font-medium">Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {results.map((r, i) => (
-            <tr key={i} className="border-t border-zinc-100 align-top dark:border-zinc-900">
-              <td className="py-1.5 pr-4 font-mono text-xs">{r.command.join(" ")}</td>
-              <td className={`py-1.5 pr-4 font-medium ${STATUS[r.status]}`}>{r.status.replace("_", " ")}</td>
-              <td className="py-1.5 pr-4 font-mono text-xs">{r.exitCode ?? "—"}</td>
-              <td className="py-1.5 pr-4 text-xs">{r.durationMs === null ? "—" : `${(r.durationMs / 1000).toFixed(1)}s`}</td>
-              <td className="py-1.5 text-xs">
-                {r.summary ?? ""}
-                {r.output && (
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-zinc-500">Output</summary>
-                    <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-50 p-2 font-mono text-[11px] dark:bg-zinc-900">{r.output}</pre>
-                  </details>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200/80 dark:divide-zinc-900 dark:border-zinc-800/80">
+      {results.map((r, i) => {
+        const failed = r.status === "failed" || r.status === "timed_out";
+        const badge = RESULT_BADGE[r.status];
+        return (
+          <li key={i} className="px-3.5 py-2.5 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="font-medium capitalize text-zinc-900 dark:text-zinc-100">{friendlyCheckName(r.command)}</span>
+                {r.durationMs !== null && <span className="text-xs text-zinc-400">{(r.durationMs / 1000).toFixed(1)}s</span>}
+              </div>
+              <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+            </div>
+            {r.summary && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{r.summary}</p>}
+            {r.output && (
+              <details className="mt-1.5 text-xs" open={failed}>
+                <summary className="cursor-pointer text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+                  {failed ? "Show failure output" : "Show output"}
+                </summary>
+                <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-200/80 bg-zinc-50 p-2.5 font-mono text-[11px] dark:border-zinc-800 dark:bg-zinc-900">
+                  {r.output}
+                </pre>
+              </details>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
 function lineClass(line: string): string {
-  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git") || line.startsWith("index ")) return "text-zinc-500";
-  if (line.startsWith("@@")) return "text-sky-700 dark:text-sky-300";
-  if (line.startsWith("+")) return "bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200";
-  if (line.startsWith("-")) return "bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-200";
+  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git") || line.startsWith("index ")) {
+    return "text-zinc-400 dark:text-zinc-500";
+  }
+  if (line.startsWith("@@")) return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  if (line.startsWith("+")) return "bg-emerald-500/10 text-emerald-900 dark:text-emerald-200";
+  if (line.startsWith("-")) return "bg-red-500/10 text-red-900 dark:text-red-200";
   return "";
 }
 
-/** Checks: outcome, real results after the change, baseline and server flags. */
+/** Human-readable verification summary with expandable outputs and baseline checks. */
 export function ChecksView({ job }: { job: Job }) {
   const v = job.verification;
   const outcome = v ? OUTCOME[v.outcome] : null;
+  const baselineFailed = job.baselineResults.some((r) => r.status === "failed" || r.status === "timed_out");
+
   return (
-    <Panel title="Checks">
+    <Panel title="Verification" actions={outcome ? <StatusBadge tone={outcome.badge}>{outcome.label}</StatusBadge> : undefined}>
       {!v && job.testResults.length === 0 && job.baselineResults.length === 0 ? (
-        <Muted>{job.state === "editing" || job.state === "testing" ? "Running checks…" : "No checks have run yet."}</Muted>
+        <Muted>
+          {job.state === "editing" || job.state === "testing" ? "Running checks on the changes…" : "No checks have run yet."}
+        </Muted>
       ) : (
-        <div className="flex flex-col gap-4">
-          {outcome && (
-            <div className={`rounded-md border p-3 text-sm ${outcome.tone}`}>
-              <p className="font-semibold">{outcome.label}</p>
-              <p>{outcome.detail}</p>
-            </div>
-          )}
-          <ResultsTable results={job.testResults} caption="Run by Shipfig after the change" />
-          <ResultsTable results={job.baselineResults} caption="Baseline (before any change)" />
+        <div className="flex flex-col gap-3">
+          {outcome && <p className="text-sm text-zinc-600 dark:text-zinc-400">{outcome.detail}</p>}
+          <ChecksList results={job.testResults} />
           {v && v.flags.length > 0 && (
-            <div>
-              <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Flags</h3>
-              <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+              <p className="font-medium">Notes</p>
+              <ul className="mt-1 list-disc space-y-1 pl-4">
                 {v.flags.map((f, i) => (
                   <li key={i} className="break-words">
                     {f}
@@ -105,6 +107,16 @@ export function ChecksView({ job }: { job: Job }) {
                 ))}
               </ul>
             </div>
+          )}
+          {job.baselineResults.length > 0 && (
+            <details open={baselineFailed} className="text-xs">
+              <summary className="cursor-pointer text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+                Before-change baseline ({job.baselineResults.length} checks)
+              </summary>
+              <div className="mt-2">
+                <ChecksList results={job.baselineResults} />
+              </div>
+            </details>
           )}
         </div>
       )}
@@ -116,15 +128,31 @@ export function ChecksView({ job }: { job: Job }) {
 export function ReviewView({ job }: { job: Job }) {
   const v = job.verification;
   if (!v || (!v.review && !v.reviewError)) return null;
+
+  const isPass = v.review?.verdict === "pass" && v.review.concerns.length === 0;
+  const badge = v.review ? (
+    <StatusBadge tone={v.review.verdict === "pass" ? "completed" : "failed"}>
+      {v.review.verdict === "pass" ? "Looks good" : "Needs attention"}
+    </StatusBadge>
+  ) : (
+    <StatusBadge tone="waiting">Unavailable</StatusBadge>
+  );
+
   return (
-    <Panel title="Review">
-      <div className="flex flex-col gap-2 text-sm">
-        <p className="text-xs text-zinc-500">A model review of the actual diff and results. It can block a change but never approves one.</p>
+    <CollapsiblePanel
+      title="Automated review"
+      badge={badge}
+      summary={v.review ? (v.review.concerns.length === 0 ? "No concerns" : `${v.review.concerns.length} concern(s)`) : v.reviewError ?? undefined}
+      defaultOpen={!isPass}
+    >
+      <div className="flex flex-col gap-2.5 text-sm">
+        <p className="text-xs text-zinc-500">
+          Automated review of the diff and check results. It can flag issues, while final approval is always yours.
+        </p>
         {v.review ? (
           <>
-            <p className={`font-medium ${v.review.verdict === "pass" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}>Verdict: {v.review.verdict}</p>
             {v.review.concerns.length > 0 ? (
-              <ul className="list-disc pl-5">
+              <ul className="list-disc space-y-1 pl-4 text-xs text-zinc-800 dark:text-zinc-200">
                 {v.review.concerns.map((c, i) => (
                   <li key={i} className="break-words">
                     {c}
@@ -132,12 +160,14 @@ export function ReviewView({ job }: { job: Job }) {
                 ))}
               </ul>
             ) : (
-              <p>No concerns.</p>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">No concerns raised.</p>
             )}
             {v.review.evidence.length > 0 && (
-              <details>
-                <summary className="cursor-pointer text-zinc-600 dark:text-zinc-400">Evidence the review cites ({v.review.evidence.length})</summary>
-                <ul className="mt-1 list-disc pl-5 text-xs">
+              <details className="text-xs">
+                <summary className="cursor-pointer text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+                  Cited evidence ({v.review.evidence.length})
+                </summary>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-zinc-600 dark:text-zinc-400">
                   {v.review.evidence.map((e, i) => (
                     <li key={i} className="break-words">
                       {e}
@@ -148,61 +178,87 @@ export function ReviewView({ job }: { job: Job }) {
             )}
           </>
         ) : (
-          <p className="text-amber-800 dark:text-amber-300">Review unavailable: {v.reviewError}</p>
+          <p className="text-xs text-amber-800 dark:text-amber-300">Review unavailable: {v.reviewError}</p>
         )}
       </div>
-    </Panel>
+    </CollapsiblePanel>
   );
 }
 
-/** The exact diff the human reviews, with per-file stats and its sha256. */
+/** Clean file summary + unified diff viewer. */
 export function DiffView({ job }: { job: Job }) {
   const v = job.verification;
   if (!job.diff) return null;
+
   return (
-    <Panel title={`Diff${v ? ` · ${v.diff.files.length} file(s), +${v.diff.additions} −${v.diff.deletions}` : ""}`}>
-      <div className="flex flex-col gap-2">
-        {v && (
-          <ul className="font-mono text-xs [overflow-wrap:anywhere]">
+    <Panel
+      title="Code changes"
+      actions={
+        v ? (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-zinc-500">
+              {v.diff.files.length} {v.diff.files.length === 1 ? "file" : "files"}
+            </span>
+            <span className="font-mono text-emerald-600 dark:text-emerald-400">+{v.diff.additions}</span>
+            <span className="font-mono text-red-600 dark:text-red-400">−{v.diff.deletions}</span>
+          </div>
+        ) : undefined
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {v && v.diff.files.length > 0 && (
+          <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200/80 text-xs dark:divide-zinc-900 dark:border-zinc-800/80">
             {v.diff.files.map((f) => (
-              <li key={f.path}>
-                <span className="inline-block w-20 text-zinc-500">{f.status}</span> {f.path} {f.additions === null ? "(binary)" : `+${f.additions} −${f.deletions}`}
+              <li key={f.path} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                <span className="min-w-0 truncate font-mono text-zinc-800 dark:text-zinc-200">{f.path}</span>
+                <span className="shrink-0 font-mono text-[11px]">
+                  {f.additions === null ? (
+                    <span className="text-zinc-500">binary</span>
+                  ) : (
+                    <>
+                      <span className="text-emerald-600 dark:text-emerald-400">+{f.additions}</span>{" "}
+                      <span className="text-red-600 dark:text-red-400">−{f.deletions}</span>
+                    </>
+                  )}
+                </span>
               </li>
             ))}
           </ul>
         )}
-        <pre tabIndex={0} aria-label="Unified diff" className="max-h-[36rem] overflow-auto rounded-md border border-zinc-200 font-mono text-xs leading-5 dark:border-zinc-800">
+        <pre
+          tabIndex={0}
+          aria-label="Unified diff"
+          className="max-h-[34rem] overflow-auto rounded-lg border border-zinc-200/80 bg-zinc-50/70 font-mono text-xs leading-5 dark:border-zinc-800/80 dark:bg-zinc-950"
+        >
           {job.diff.split("\n").map((line, i) => (
             <div key={i} className={`whitespace-pre px-3 ${lineClass(line)}`}>
               {line || " "}
             </div>
           ))}
         </pre>
-        {v && (
-          <p className="font-mono text-[11px] text-zinc-500 [overflow-wrap:anywhere]">
-            sha256 {v.diff.hash}
-            {v.diff.truncated ? " · diff truncated for display" : ""}
-          </p>
-        )}
+        {v?.diff.truncated && <p className="text-xs text-zinc-500">Diff truncated for display.</p>}
       </div>
     </Panel>
   );
 }
 
-/** The executor's own reports: claims, not evidence. */
+/** The executor's own reports: shown inside Technical details. */
 export function ExecutorAttempts({ job }: { job: Job }) {
   if (job.execution.length === 0) return null;
   return (
-    <details className="rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-950">
-      <summary className="cursor-pointer font-medium">Executor attempts ({job.execution.length}): the agent&rsquo;s own claims, not evidence</summary>
-      <ol className="mt-2 flex flex-col gap-2">
+    <CollapsiblePanel
+      title="Agent attempts"
+      summary={`${job.execution.length} ${job.execution.length === 1 ? "attempt" : "attempts"}`}
+      defaultOpen={false}
+    >
+      <ol className="flex flex-col gap-2">
         {job.execution.map((a) => {
           const report = a.report as { summary?: string } | null;
           return (
-            <li key={a.attempt} className="rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
-              <p className="font-medium">{a.attempt === 0 ? "First attempt" : `Repair ${a.attempt}`}</p>
-              {report?.summary && <p className="whitespace-pre-wrap break-words">{report.summary}</p>}
-              <p className="text-xs text-zinc-500">
+            <li key={a.attempt} className="rounded-md border border-zinc-200/80 bg-zinc-50/70 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/50">
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">{a.attempt === 0 ? "First attempt" : `Repair ${a.attempt}`}</p>
+              {report?.summary && <p className="mt-1 whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-300">{report.summary}</p>}
+              <p className="mt-1.5 font-mono text-[11px] text-zinc-500">
                 wrote {a.filesWritten.join(", ") || "nothing"}
                 {a.refusals.length > 0 ? ` · refused: ${a.refusals.join("; ")}` : ""} · {a.usage.turns} turns
               </p>
@@ -210,6 +266,6 @@ export function ExecutorAttempts({ job }: { job: Job }) {
           );
         })}
       </ol>
-    </details>
+    </CollapsiblePanel>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { Job } from "@/lib/jobs/store";
-import { Button, Panel } from "./ui";
+import { Button, Panel, StatusBadge } from "./ui";
 
 /**
  * Publish approval and result. Approval sends the diff hash the user is
@@ -26,56 +26,78 @@ export function PublishView({
 
   return (
     <Panel
-      title="Publish"
+      title="Pull request"
+      className={awaiting ? "ring-1 ring-amber-500/35" : ""}
       actions={
         awaiting ? (
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => onDecision("reject", false)} disabled={busy}>
-              Reject
-            </Button>
-            <Button onClick={() => onDecision("approve", acknowledged)} disabled={busy || !job.diffHash || (unverified && !acknowledged)}>
-              Approve and open draft PR
-            </Button>
-          </div>
+          <StatusBadge tone="waiting">Ready for your approval</StatusBadge>
+        ) : result ? (
+          <StatusBadge tone="completed">PR #{result.prNumber}</StatusBadge>
+        ) : job.state === "publishing" ? (
+          <StatusBadge tone="working">Opening PR</StatusBadge>
         ) : null
       }
     >
       <div className="flex flex-col gap-3 text-sm">
         {result ? (
-          <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-            <p className="font-semibold">
-              {result.reused.pullRequest ? "Pull request" : result.draft ? "Draft pull request opened" : "Pull request opened"}:{" "}
-              <a href={result.prUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
-                #{result.prNumber}
-              </a>
-            </p>
-            <p className="mt-1 font-mono text-xs">
-              {result.branch} @ {result.commitSha.slice(0, 12)} · {result.prState}
-              {result.reused.commit || result.reused.pullRequest ? " · reused from an earlier attempt" : ""}
-            </p>
-            {result.baseMoved && <p className="mt-1">The base branch moved after this job started; check the PR for conflicts.</p>}
-            <p className="mt-1">Shipfig never merges. Review the PR on GitHub and mark it ready when you are happy.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-950 dark:text-emerald-100">
+            <div>
+              <p className="font-semibold">
+                {result.reused.pullRequest ? "Pull request ready" : result.draft ? "Draft pull request opened" : "Pull request opened"}
+              </p>
+              <p className="mt-0.5 text-xs opacity-85">
+                Shipfig never merges automatically. Review the PR on GitHub and mark it ready when you&apos;re happy.
+              </p>
+              {result.baseMoved && (
+                <p className="mt-1 text-xs font-medium">The base branch moved after this job started — check the PR for conflicts.</p>
+              )}
+            </div>
+            <a
+              href={result.prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 shrink-0 items-center rounded-md bg-emerald-600 px-3.5 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              Open PR #{result.prNumber} on GitHub ↗
+            </a>
           </div>
         ) : job.state === "publishing" ? (
-          <p role="status">Publishing the approved change to GitHub…</p>
+          <p role="status" className="text-zinc-600 dark:text-zinc-400">
+            Opening your draft pull request on GitHub…
+          </p>
         ) : awaiting ? (
           <>
-            <p>
-              Approving creates branch <code className="font-mono text-xs">{job.branchName}</code> with exactly the diff above and opens a draft pull request for{" "}
-              {job.repoOwner}/{job.repoName}#{job.issueNumber}. Nothing is merged.
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">
+              Review the verification results and code changes below. When you approve, Shipfig will open a draft pull request on{" "}
+              <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                {job.repoOwner}/{job.repoName}
+              </span>
+              . Nothing is merged automatically.
             </p>
             {unverified && (
-              <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-                <input type="checkbox" className="mt-0.5" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} />
-                <span>I understand some requested checks could not run, so this change is unverified. The PR will say so.</span>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={acknowledged}
+                  onChange={(e) => setAcknowledged(e.target.checked)}
+                />
+                <span>I understand some checks could not run, so this change is unverified.</span>
               </label>
             )}
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+              <Button variant="secondary" onClick={() => onDecision("reject", false)} disabled={busy}>
+                Reject
+              </Button>
+              <Button onClick={() => onDecision("approve", acknowledged)} disabled={busy || !job.diffHash || (unverified && !acknowledged)}>
+                Approve &amp; open draft PR
+              </Button>
+            </div>
           </>
         ) : null}
         {job.publishApprovedAt && (
           <p className="text-xs text-zinc-500">
-            Approved by {job.publishApprovedBy} at <time dateTime={job.publishApprovedAt}>{new Date(job.publishApprovedAt).toLocaleString()}</time> for diff{" "}
-            <span className="font-mono">{job.publishApprovedHash?.slice(0, 12)}</span>
+            Approved by {job.publishApprovedBy} on <time dateTime={job.publishApprovedAt}>{new Date(job.publishApprovedAt).toLocaleString()}</time>
           </p>
         )}
       </div>
