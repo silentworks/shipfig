@@ -7,6 +7,7 @@ import type { Issue, Repo } from "@/lib/github/schemas";
 import type { Job } from "@/lib/jobs/store";
 import { ActiveJobBanner } from "./active-job-banner";
 import { ApiError, fetchJson, useResource } from "./api";
+import { Markdown } from "./markdown";
 import { Button, EmptyState, ErrorNotice, Loading } from "./ui";
 
 // Mirrors lib/validation; the server re-validates everything.
@@ -424,10 +425,12 @@ export function IssuePicker() {
                         </div>
                       </div>
 
-                      {/* Issue text is untrusted: rendered as plain text, never as HTML/markdown. */}
-                      <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
-                        {issue.data.issue.body.trim() || "No description provided."}
-                      </pre>
+                      {/* Rendered with GitHub Flavored Markdown; raw HTML is disabled. */}
+                      {issue.data.issue.body.trim() ? (
+                        <Markdown content={issue.data.issue.body} />
+                      ) : (
+                        <p className="text-sm italic text-zinc-400">No description provided.</p>
+                      )}
                     </article>
                   </>
                 )}
