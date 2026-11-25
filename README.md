@@ -31,7 +31,12 @@ npm run dev                         # http://localhost:3000
 | `ANTHROPIC_API_KEY` | no | Anthropic key. If unset, the SDK uses `ANTHROPIC_AUTH_TOKEN` or an `ant auth login` profile. Server-side only. |
 | `SHIPFIG_ANTHROPIC_MODEL` | no (`claude-opus-5-5`) | Claude model. |
 | `SHIPFIG_ANTHROPIC_EFFORT` | no (`high`) | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. |
-| `SHIPFIG_OPERATOR_TOKEN` | in production | At least 16 characters. When set, every page and API request needs it: the browser prompts (any username, the token as password), or send `Authorization: Bearer <token>`. In production Shipfig refuses to serve without it. |
+| `DATABASE_URL` | yes | Postgres connection string used by Drizzle ORM and Better Auth. |
+| `BETTER_AUTH_SECRET` | yes | Secret key for Better Auth session signing (`openssl rand -base64 32`). |
+| `BETTER_AUTH_URL` | yes | Canonical base URL of the Shipfig app (e.g. `http://localhost:3000`). |
+| `GITHUB_CLIENT_ID` | no | Optional GitHub OAuth client ID to enable "Continue with GitHub" sign-in. |
+| `GITHUB_CLIENT_SECRET` | no | Optional GitHub OAuth client secret. |
+| `SHIPFIG_OPERATOR_TOKEN` | no | Optional headless/CLI Bearer or Basic token (at least 16 characters) alongside Better Auth user sessions. |
 | `SHIPFIG_GATEWAY_SPRITE` | no (`shipfig-gateway`) | Trusted sprite that makes GitHub calls. |
 | `SHIPFIG_ALLOWED_REPOS` | no | Comma-separated `owner/repo` allowlist. |
 | `SHIPFIG_DB_PATH` | no (`.data/shipfig.db`) | SQLite job database. |
@@ -48,6 +53,9 @@ them return `503 not_configured`, and the error names the missing variable.
 | `npm run lint` | ESLint |
 | `npm run typecheck` | Generate route types, then `tsc --noEmit` |
 | `npm test` | Vitest unit tests |
+| `npm run db:generate` | Generate Drizzle SQL migrations for Postgres (`drizzle/`) |
+| `npm run db:migrate` | Apply Drizzle migrations to `DATABASE_URL` |
+| `npm run db:push` | Push Drizzle schema directly to `DATABASE_URL` (dev) |
 | `npm run spike -- owner/repo N` | Live Sprites + GitHub connector proof (SIL-527) |
 | `npm run connector -- list\|show\|apply-policy` | Inspect or restrict the GitHub connector |
 | `npm run sandbox-tools-smoke` | Live check of the agent's file tools and policies on a scratch repo in a real sprite (SIL-532) |

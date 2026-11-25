@@ -131,13 +131,29 @@ describe("issues", () => {
 });
 
 describe("POST /api/jobs", () => {
-  const post = (body: unknown) =>
-    jobsRoute.POST(new Request("http://localhost/api/jobs", { method: "POST", headers: { "X-Shipfig-Action": "1" }, body: typeof body === "string" ? body : JSON.stringify(body) }));
+  const TEST_TOKEN = "test-operator-token-123456";
+  const post = (body: unknown, auth = true) =>
+    jobsRoute.POST(
+      new Request("http://localhost/api/jobs", {
+        method: "POST",
+        headers: {
+          "X-Shipfig-Action": "1",
+          ...(auth ? { Authorization: `Bearer ${TEST_TOKEN}` } : {}),
+        },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+    );
 
   beforeEach(() => {
+    vi.stubEnv("SHIPFIG_OPERATOR_TOKEN", TEST_TOKEN);
     const active = jobStore().activeJob();
     if (active) jobStore().cancel(active.id);
     routes({ "/repos/acme/web": repo("acme/web"), "/repos/acme/web/issues/5": issue(5), "/repos/acme/web/issues/6": issue(6, { state: "closed" }) });
+  });
+
+  it("rejects unauthenticated requests with 401", async () => {
+    const res = await post({ owner: "acme", repo: "web", issueNumber: 5 }, false);
+    expect(res.status).toBe(401);
   });
 
   it("requires an explicit, valid selection", async () => {

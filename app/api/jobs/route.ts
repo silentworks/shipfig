@@ -31,8 +31,8 @@ const createJobSchema = z.strictObject({
  * GitHub so the stored snapshot cannot be spoofed.
  */
 export async function POST(request: Request) {
-  const denied = guardAction(request);
-  if (denied) return denied;
+  const guard = await guardAction(request);
+  if (!guard.ok) return guard.response;
   try {
     let body: unknown;
     try {

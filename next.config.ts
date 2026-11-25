@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Self-contained server for the Docker image (see Dockerfile).
   output: "standalone",
-  // The Sprites SDK uses Node built-ins (WebSocket, crypto) and must not be bundled.
-  serverExternalPackages: ["@fly/sprites"],
+  // Native/Node-only packages that must not be bundled.
+  serverExternalPackages: ["@fly/sprites", "pg"],
   experimental: {
     agentFeedback: true,
   },

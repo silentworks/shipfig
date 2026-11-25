@@ -1,4 +1,4 @@
-import { guardAction } from "@/lib/auth";
+import { formatApprover, guardAction } from "@/lib/auth";
 import { after } from "next/server";
 import { z } from "zod";
 import { errorResponse, jsonError } from "@/lib/http";
@@ -19,12 +19,11 @@ const decisionSchema = z.strictObject({
 /**
  * Approve or reject publishing. Approval is bound server-side to the exact
  * diff hash Shipfig recorded, and is stored on the job before anything is
- * written to GitHub. The MVP has no user accounts, so the approver is
- * recorded as the local operator.
+ * written to GitHub. The approver is recorded from the authenticated session.
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/publish">) {
-  const denied = guardAction(request);
-  if (denied) return denied;
+  const guard = await guardAction(request);
+  if (!guard.ok) return guard.response;
   try {
     const id = jobIdSchema.parse((await ctx.params).id);
     let body: unknown;
@@ -41,7 +40,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/p
       job = store.approvePublish(id, {
         expectedVersion: input.version,
         diffHash: input.diffHash,
-        approvedBy: "local operator",
+        approvedBy: formatApprover(guard.identity),
         acknowledgeUnverified: input.acknowledgeUnverified,
       });
     } else {

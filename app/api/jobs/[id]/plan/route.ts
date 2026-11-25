@@ -1,4 +1,4 @@
-import { guardAction } from "@/lib/auth";
+import { formatApprover, guardAction } from "@/lib/auth";
 import { after } from "next/server";
 import { z } from "zod";
 import { errorResponse, jsonError } from "@/lib/http";
@@ -14,12 +14,12 @@ const decisionSchema = z.strictObject({
 
 /**
  * Approve or reject the plan. Approval moves the job to editing; nothing is
- * changed in the workspace before this. The MVP has no user accounts, so the
- * approver is recorded as the local operator.
+ * changed in the workspace before this. The approver is recorded from the
+ * authenticated session.
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/plan">) {
-  const denied = guardAction(request);
-  if (denied) return denied;
+  const guard = await guardAction(request);
+  if (!guard.ok) return guard.response;
   try {
     const id = jobIdSchema.parse((await ctx.params).id);
     let body: unknown;
@@ -30,7 +30,8 @@ export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/p
     }
     const { decision, version } = decisionSchema.parse(body);
     const store = jobStore();
-    const job = decision === "approve" ? store.approvePlan(id, version, "local operator") : store.rejectPlan(id, version);
+    const job =
+      decision === "approve" ? store.approvePlan(id, version, formatApprover(guard.identity)) : store.rejectPlan(id, version);
     after(() => startJobInBackground(id));
     return Response.json({ job });
   } catch (error) {
