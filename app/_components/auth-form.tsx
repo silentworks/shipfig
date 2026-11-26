@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { signIn, signUp } from "@/lib/auth-client";
 import { Button, ErrorNotice } from "./ui";
+import { LogoMark } from "./logo";
 
 function safeNextPath(raw: string | null): string {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
@@ -78,9 +79,7 @@ export function AuthForm({ mode, githubEnabled }: { mode: "sign-in" | "sign-up";
     <div className="flex min-h-screen flex-1 flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-sm rounded-xl border border-zinc-200/80 bg-white p-6 shadow-xs dark:border-zinc-800/80 dark:bg-zinc-950">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-900 text-sm font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-            S
-          </div>
+          <LogoMark className="mb-3 h-10 w-10" />
           <h1 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             {isSignUp ? "Create your Shipfig account" : "Sign in to Shipfig"}
           </h1>

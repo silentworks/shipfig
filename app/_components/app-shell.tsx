@@ -9,6 +9,7 @@ import { AWAITING_HUMAN_STATES, STATE_LABELS } from "@/lib/jobs/states";
 import type { Job } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
 import { CommandPalette } from "./command-palette";
+import { LogoMark } from "./logo";
 import { Kbd } from "./ui";
 
 const ACTIVE_POLL_MS = 5_000;
@@ -470,9 +471,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
       <aside className="hidden w-56 shrink-0 flex-col border-r border-zinc-200/80 bg-zinc-50/80 md:flex dark:border-zinc-800/80 dark:bg-zinc-950">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200/80 px-3.5 dark:border-zinc-800/80">
           <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-900 text-[11px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-              S
-            </span>
+            <LogoMark className="h-5 w-5 shrink-0" />
             <span>Shipfig</span>
           </Link>
           <button
@@ -522,9 +521,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/90 px-4 backdrop-blur-md md:hidden dark:border-zinc-800/80 dark:bg-zinc-950/90">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-900 text-[11px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-                S
-              </span>
+              <LogoMark className="h-5 w-5 shrink-0" />
               <span>Shipfig</span>
             </Link>
             <Suspense fallback={<MobileNav pathname={null} />}>
