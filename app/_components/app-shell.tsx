@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { signOut, useSession } from "@/lib/auth-client";
 import type { Repo } from "@/lib/github/schemas";
 import { AWAITING_HUMAN_STATES, STATE_LABELS } from "@/lib/jobs/states";
 import type { Job } from "@/lib/jobs/store";
@@ -131,10 +132,11 @@ function ThemeSelector({ mode, onChange }: { mode: ThemeMode; onChange: (mode: T
   );
 }
 
-function useJobsOverview() {
+function useJobsOverview(enabled: boolean) {
   const [data, setData] = useState<{ activeJob: Job | null; totalJobs: number }>({ activeJob: null, totalJobs: 0 });
 
   useEffect(() => {
+    if (!enabled) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -162,15 +164,16 @@ function useJobsOverview() {
       stopped = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [enabled]);
 
   return data;
 }
 
-function useSidebarRepos() {
+function useSidebarRepos(enabled: boolean) {
   const [repos, setRepos] = useState<Repo[]>([]);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     fetchJson<{ repos: Repo[] }>("/api/repos")
       .then((res) => {
@@ -180,7 +183,7 @@ function useSidebarRepos() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 
   return useMemo(() => {
     const groups = new Map<string, Repo[]>();
@@ -338,13 +341,78 @@ function MainFrame({ children }: { children: ReactNode }) {
   return <main className="flex min-h-0 flex-1 flex-col">{children}</main>;
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
-  const { activeJob, totalJobs } = useJobsOverview();
-  const repoGroups = useSidebarRepos();
+const AUTH_ROUTES = new Set(["/sign-in", "/sign-up"]);
+
+function UserAccountMenu({ compact = false }: { compact?: boolean }) {
+  const router = useRouter();
+  const { data: session } = useSession();
+  const [signingOut, setSigningOut] = useState(false);
+
+  if (!session?.user) return null;
+
+  const displayName = session.user.name || session.user.email;
+  const initial = displayName.slice(0, 1).toUpperCase();
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await signOut();
+      router.push("/sign-in");
+      router.refresh();
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={handleSignOut}
+        disabled={signingOut}
+        className="inline-flex h-7 items-center rounded-md border border-zinc-200/80 px-2 text-xs text-zinc-600 hover:text-zinc-900 disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+      >
+        {signingOut ? "…" : "Sign out"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-white px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/70">
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          aria-hidden
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-[11px] font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          {initial}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100">{session.user.name || "Signed in"}</p>
+          <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">{session.user.email}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={handleSignOut}
+        disabled={signingOut}
+        className="shrink-0 rounded-md px-1.5 py-1 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+      >
+        {signingOut ? "…" : "Sign out"}
+      </button>
+    </div>
+  );
+}
+
+function AppShellInner({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const isAuthRoute = pathname !== null && AUTH_ROUTES.has(pathname);
+  const { activeJob, totalJobs } = useJobsOverview(!isAuthRoute);
+  const repoGroups = useSidebarRepos(!isAuthRoute);
   const { mode, selectMode } = useThemeMode();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
+    if (isAuthRoute) return;
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -353,7 +421,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [isAuthRoute]);
+
+  if (isAuthRoute) {
+    return <main className="flex min-h-screen flex-col">{children}</main>;
+  }
 
   const needsYou = activeJob ? AWAITING_HUMAN_STATES.has(activeJob.state) : false;
 
@@ -405,6 +477,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           )}
 
+          <UserAccountMenu />
           <ThemeSelector mode={mode} onChange={selectMode} />
         </div>
       </aside>
@@ -438,6 +511,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <span>{needsYou ? "Approve" : "Active"}</span>
               </Link>
             )}
+            <UserAccountMenu compact />
             <button
               type="button"
               onClick={() => selectMode(mode === "dark" ? "light" : "dark")}
@@ -464,5 +538,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
+  );
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<main className="flex min-h-screen flex-col">{children}</main>}>
+      <AppShellInner>{children}</AppShellInner>
+    </Suspense>
   );
 }

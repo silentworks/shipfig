@@ -1,17 +1,43 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { nextCookies } from "better-auth/next-js";
+import { db, schema } from "@/lib/db";
 
 /**
- * Operator access control (SIL-536). Shipfig has one operator, not user
- * accounts. When SHIPFIG_OPERATOR_TOKEN is set, every request must carry it
- * (HTTP Basic with any username, or `Authorization: Bearer <token>`). In
- * production the token is mandatory: without it Shipfig refuses to serve,
- * so a deployment can never be reachable unauthenticated.
+ * Authentication and request guards (SIL-538).
  *
- * State-changing requests (job start, plan/publish decisions, cancel,
- * retry) additionally need the `X-Shipfig-Action` header and must not come
- * from another site, which stops cross-site requests from approving
- * anything, including against a local instance.
+ * Primary authentication uses Better Auth backed by Drizzle ORM + Postgres.
+ * `SHIPFIG_OPERATOR_TOKEN` remains supported as an optional headless/CLI
+ * Bearer/Basic fallback when configured.
+ *
+ * State-changing requests (job start, plan/publish decisions, cancel, retry)
+ * additionally require the `X-Shipfig-Action` header and must be same-origin,
+ * blocking cross-site requests from approving or mutating jobs.
  */
+
+export const auth = betterAuth({
+  database: drizzleAdapter(db(), {
+    provider: "pg",
+    schema,
+  }),
+  emailAndPassword: {
+    enabled: true,
+  },
+  ...(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+    ? {
+        socialProviders: {
+          github: {
+            clientId: process.env.GITHUB_CLIENT_ID,
+            clientSecret: process.env.GITHUB_CLIENT_SECRET,
+          },
+        },
+      }
+    : {}),
+  plugins: [nextCookies()],
+});
+
+export type SessionData = typeof auth.$Infer.Session;
 
 export const ACTION_HEADER = "x-shipfig-action";
 export const MIN_TOKEN_LENGTH = 16;
@@ -44,7 +70,16 @@ export function presentedToken(authorization: string | null): string | null {
   return null;
 }
 
-export type AccessDecision = { ok: true } | { ok: false; status: 401 | 403 | 503; code: string; message: string; challenge?: boolean };
+export interface AuthIdentity {
+  kind: "user" | "operator";
+  userId?: string;
+  name: string;
+  email?: string;
+}
+
+export type AccessDecision =
+  | { ok: true; identity?: AuthIdentity }
+  | { ok: false; status: 401 | 403 | 503; code: string; message: string; challenge?: boolean };
 
 export interface AccessEnv {
   token: string | undefined;
@@ -55,22 +90,100 @@ export function accessEnv(env: Record<string, string | undefined> = process.env)
   return { token: env.SHIPFIG_OPERATOR_TOKEN || undefined, production: env.NODE_ENV === "production" };
 }
 
-/** Is this request from the operator? */
+/** Format the authenticated identity for approval audit fields. */
+export function formatApprover(identity: AuthIdentity): string {
+  if (identity.kind === "operator") return "operator";
+  if (identity.name && identity.email) return `${identity.name} (${identity.email})`;
+  return identity.email || identity.name || identity.userId || "authenticated user";
+}
+
+/** Validate the optional headless/CLI operator token, if configured and presented. */
 export function checkOperator(headers: Headers, env: AccessEnv = accessEnv()): AccessDecision {
   if (!env.token) {
-    if (env.production) {
-      return { ok: false, status: 503, code: "not_configured", message: "Shipfig will not run in production without SHIPFIG_OPERATOR_TOKEN" };
-    }
-    return { ok: true }; // local development: open, but actions still need the header below
+    return { ok: false, status: 401, code: "unauthorized", message: "Authentication required" };
   }
   if (env.token.length < MIN_TOKEN_LENGTH) {
-    return { ok: false, status: 503, code: "not_configured", message: `SHIPFIG_OPERATOR_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters` };
+    return {
+      ok: false,
+      status: 503,
+      code: "not_configured",
+      message: `SHIPFIG_OPERATOR_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`,
+    };
   }
   const presented = presentedToken(headers.get("authorization"));
   if (presented === null || !sameSecret(presented, env.token)) {
     return { ok: false, status: 401, code: "unauthorized", message: "Operator token required", challenge: true };
   }
-  return { ok: true };
+  return { ok: true, identity: { kind: "operator", name: "operator" } };
+}
+
+export type SessionLookup = (
+  headers: Headers,
+) => Promise<{ user: { id: string; name: string; email: string } } | null>;
+
+/** Look up the Better Auth session from request headers. */
+export async function getSessionFromHeaders(headers: Headers): Promise<{ user: { id: string; name: string; email: string } } | null> {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    const result = await auth.api.getSession({ headers });
+    if (!result?.user) return null;
+    return {
+      user: {
+        id: result.user.id,
+        name: result.user.name,
+        email: result.user.email,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Authenticate a request via Better Auth session or optional operator token.
+ * Always requires valid credentials (no open fallback).
+ */
+export async function authenticateRequest(
+  headers: Headers,
+  options: { env?: AccessEnv; getSession?: SessionLookup } = {},
+): Promise<AccessDecision> {
+  const env = options.env ?? accessEnv();
+  const getSession = options.getSession ?? getSessionFromHeaders;
+
+  // 1. Optional headless/CLI fallback when SHIPFIG_OPERATOR_TOKEN is set and Authorization is sent.
+  if (env.token) {
+    if (env.token.length < MIN_TOKEN_LENGTH) {
+      return {
+        ok: false,
+        status: 503,
+        code: "not_configured",
+        message: `SHIPFIG_OPERATOR_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`,
+      };
+    }
+    const presented = presentedToken(headers.get("authorization"));
+    if (presented !== null) {
+      if (sameSecret(presented, env.token)) {
+        return { ok: true, identity: { kind: "operator", name: "operator" } };
+      }
+      return { ok: false, status: 401, code: "unauthorized", message: "Invalid operator token", challenge: true };
+    }
+  }
+
+  // 2. Better Auth session cookie.
+  const session = await getSession(headers);
+  if (session?.user) {
+    return {
+      ok: true,
+      identity: {
+        kind: "user",
+        userId: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+      },
+    };
+  }
+
+  return { ok: false, status: 401, code: "unauthorized", message: "Authentication required" };
 }
 
 /** Is this state-changing request deliberate and same-site? */
@@ -107,11 +220,20 @@ export function deniedResponse(decision: Exclude<AccessDecision, { ok: true }>):
   );
 }
 
-/** Route-level guard (defence in depth behind proxy.ts) for state-changing handlers. */
-export function guardAction(request: Request): Response | null {
-  const operator = checkOperator(request.headers);
-  if (!operator.ok) return deniedResponse(operator);
+export type GuardResult = { ok: true; identity: AuthIdentity } | { ok: false; response: Response };
+
+/**
+ * Route-level guard (defence in depth behind proxy.ts) for state-changing handlers.
+ * Verifies the Better Auth session (or optional operator token) and the same-origin
+ * action header, returning the authenticated identity for audit attribution.
+ */
+export async function guardAction(
+  request: Request,
+  options: { env?: AccessEnv; getSession?: SessionLookup } = {},
+): Promise<GuardResult> {
+  const authResult = await authenticateRequest(request.headers, options);
+  if (!authResult.ok) return { ok: false, response: deniedResponse(authResult) };
   const action = checkAction(request.method, request.headers, new URL(request.url));
-  if (!action.ok) return deniedResponse(action);
-  return null;
+  if (!action.ok) return { ok: false, response: deniedResponse(action) };
+  return { ok: true, identity: authResult.identity ?? { kind: "operator", name: "operator" } };
 }

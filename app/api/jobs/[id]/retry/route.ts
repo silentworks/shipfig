@@ -6,8 +6,8 @@ import { startJobInBackground } from "@/lib/jobs/background";
 import { jobStore } from "@/lib/jobs/store";
 
 export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/retry">) {
-  const denied = guardAction(request);
-  if (denied) return denied;
+  const guard = await guardAction(request);
+  if (!guard.ok) return guard.response;
   try {
     const id = jobIdSchema.parse((await ctx.params).id);
     const job = jobStore().retry(id);
