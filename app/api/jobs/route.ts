@@ -2,6 +2,8 @@ import { guardAction } from "@/lib/auth";
 import { after, connection } from "next/server";
 import { z } from "zod";
 import { getAllowedIssue } from "@/lib/github/connector";
+import { resolveGitHubRequest } from "@/lib/github/user-client";
+import { getUserSelectedRepos } from "@/lib/github/user-repos";
 import { errorResponse, jsonError } from "@/lib/http";
 import { startJobInBackground } from "@/lib/jobs/background";
 import { jobStore } from "@/lib/jobs/store";
@@ -28,7 +30,8 @@ const createJobSchema = z.strictObject({
 /**
  * Start a job for one explicitly selected issue. Only the issue reference is
  * accepted from the client; title and URL are re-fetched server-side from
- * GitHub so the stored snapshot cannot be spoofed.
+ * GitHub using the signed-in user's connected GitHub account (or the operator
+ * gateway for headless token callers) so the stored snapshot cannot be spoofed.
  */
 export async function POST(request: Request) {
   const guard = await guardAction(request);
@@ -49,9 +52,14 @@ export async function POST(request: Request) {
         activeJobId: active.id,
       });
     }
-    const issue = await getAllowedIssue(ref);
+    const [gh, userSelectedRepos] = await Promise.all([
+      resolveGitHubRequest(guard.identity),
+      guard.identity.kind === "user" && guard.identity.userId ? getUserSelectedRepos(guard.identity.userId) : Promise.resolve([]),
+    ]);
+    const issue = await getAllowedIssue(ref, gh, userSelectedRepos);
     if (issue.state !== "open") return jsonError(409, "issue_not_open", `Issue #${issue.number} is ${issue.state}`);
-    const job = store.create({ ...ref, issueTitle: issue.title, issueUrl: issue.url });
+    const createdByUserId = guard.identity.kind === "user" ? (guard.identity.userId ?? null) : null;
+    const job = store.create({ ...ref, issueTitle: issue.title, issueUrl: issue.url, createdByUserId });
     after(() => startJobInBackground(job.id));
     return Response.json({ job }, { status: 201 });
   } catch (error) {

@@ -68,6 +68,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // /api/health and /api/auth/* stay open; static assets are skipped.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health$|api/auth(?:/.*)?$).*)"],
+  // /api/health and /api/auth/* stay open; static assets and app icons are skipped.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|api/health$|api/auth(?:/.*)?$).*)"],
 };

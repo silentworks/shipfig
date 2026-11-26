@@ -9,6 +9,7 @@ import { AWAITING_HUMAN_STATES, STATE_LABELS } from "@/lib/jobs/states";
 import type { Job } from "@/lib/jobs/store";
 import { fetchJson } from "./api";
 import { CommandPalette } from "./command-palette";
+import { LogoMark } from "./logo";
 import { Kbd } from "./ui";
 
 const ACTIVE_POLL_MS = 5_000;
@@ -175,13 +176,20 @@ function useSidebarRepos(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    fetchJson<{ repos: Repo[] }>("/api/repos")
-      .then((res) => {
-        if (!cancelled) setRepos(res.repos);
-      })
-      .catch(() => {});
+    function load() {
+      fetchJson<{ repos: Repo[] }>("/api/repos")
+        .then((res) => {
+          if (!cancelled) setRepos(res.repos);
+        })
+        .catch(() => {
+          if (!cancelled) setRepos([]);
+        });
+    }
+    load();
+    window.addEventListener("shipfig:repos-changed", load);
     return () => {
       cancelled = true;
+      window.removeEventListener("shipfig:repos-changed", load);
     };
   }, [enabled]);
 
@@ -216,6 +224,22 @@ const NAV_ITEMS = [
     icon: (
       <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-4 w-4 shrink-0">
         <path d="M3 4.5H13M3 8H13M3 11.5H9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    href: "/settings",
+    label: "Settings",
+    isActive: (pathname: string) => pathname === "/settings",
+    icon: (
+      <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-4 w-4 shrink-0">
+        <circle cx="8" cy="8" r="2.25" stroke="currentColor" strokeWidth="1.4" />
+        <path
+          d="M8 2.25v1.3M8 12.45v1.3M2.25 8h1.3M12.45 8h1.3M3.93 3.93l.92.92M11.15 11.15l.92.92M12.07 3.93l-.92.92M4.85 11.15l-.92.92"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+        />
       </svg>
     ),
   },
@@ -261,7 +285,7 @@ function SidebarContent({
       </nav>
 
       {/* Repositories grouped by owner — GitScout-style hierarchy */}
-      {repoGroups.length > 0 && (
+      {repoGroups.length > 0 ? (
         <div className="mt-4 border-t border-zinc-200/70 px-3 pt-4 dark:border-zinc-800/70">
           <div className="flex flex-col gap-4">
             {repoGroups.map(([owner, repos]) => (
@@ -299,6 +323,18 @@ function SidebarContent({
               </div>
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="mt-4 border-t border-zinc-200/70 px-3 pt-4 dark:border-zinc-800/70">
+          <Link
+            href="/settings"
+            className="flex items-center gap-2 rounded-md border border-dashed border-zinc-300/90 px-2.5 py-2 text-xs font-medium text-zinc-600 transition-colors hover:border-zinc-400 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-100"
+          >
+            <svg aria-hidden viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 shrink-0">
+              <path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+            </svg>
+            <span>Connect GitHub</span>
+          </Link>
         </div>
       )}
     </div>
@@ -435,9 +471,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
       <aside className="hidden w-56 shrink-0 flex-col border-r border-zinc-200/80 bg-zinc-50/80 md:flex dark:border-zinc-800/80 dark:bg-zinc-950">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200/80 px-3.5 dark:border-zinc-800/80">
           <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-900 text-[11px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-              S
-            </span>
+            <LogoMark className="h-5 w-5 shrink-0" />
             <span>Shipfig</span>
           </Link>
           <button
@@ -487,9 +521,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/90 px-4 backdrop-blur-md md:hidden dark:border-zinc-800/80 dark:bg-zinc-950/90">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-900 text-[11px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-                S
-              </span>
+              <LogoMark className="h-5 w-5 shrink-0" />
               <span>Shipfig</span>
             </Link>
             <Suspense fallback={<MobileNav pathname={null} />}>

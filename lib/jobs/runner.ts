@@ -8,6 +8,8 @@ import { type Verification, captureDiff, evidenceFlags, missingCheckResults, sec
 import { reviewChanges } from "@/lib/verify/review";
 import { getAllowedIssue, getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
 import { PublishConflictError, publishBundleToGitHub } from "@/lib/github/publish";
+import { resolveJobGitHubRequest } from "@/lib/github/user-client";
+import { getUserSelectedRepos } from "@/lib/github/user-repos";
 import { BundleError, collectBundle } from "@/lib/publish/bundle";
 import { commitMessage, pullRequestBody, pullRequestTitle } from "@/lib/publish/pr-body";
 import type { Issue } from "@/lib/github/schemas";
@@ -380,17 +382,39 @@ export function registerStage(state: JobState, stage: Stage): void {
   stages[state] = stage;
 }
 
-export function defaultRunnerDeps(): RunnerDeps {
+export function defaultRunnerDeps(jobId?: string): RunnerDeps {
+  const store = jobStore();
+  const jobContext = async () => {
+    const job = jobId ? store.find(jobId) : undefined;
+    const userId = job?.createdByUserId ?? null;
+    const [request, selectedRepos] = await Promise.all([
+      resolveJobGitHubRequest(userId),
+      userId ? getUserSelectedRepos(userId) : Promise.resolve([]),
+    ]);
+    return { request, selectedRepos };
+  };
   return {
-    store: jobStore(),
-    getAllowedRepo,
-    getBranchHeadSha,
-    getAllowedIssue,
+    store,
+    async getAllowedRepo(ref) {
+      const { request, selectedRepos } = await jobContext();
+      return getAllowedRepo(ref, request, selectedRepos);
+    },
+    async getBranchHeadSha(ref, branch) {
+      const { request } = await jobContext();
+      return getBranchHeadSha(ref, branch, request);
+    },
+    async getAllowedIssue(ref) {
+      const { request, selectedRepos } = await jobContext();
+      return getAllowedIssue(ref, request, selectedRepos);
+    },
     model: agentModel,
     createSandbox: createJobSandbox,
     openSandbox: openJobSandbox,
     destroySandbox: destroyJobSandbox,
-    publish: publishBundleToGitHub,
+    async publish(ref, bundle, draft, options) {
+      const { request } = await jobContext();
+      return publishBundleToGitHub(ref, bundle, draft, { ...options, request: options?.request ?? request });
+    },
   };
 }
 
@@ -422,7 +446,7 @@ async function cleanup(job: Job, deps: RunnerDeps): Promise<void> {
 }
 
 /** Advance a job until it needs a human, has no stage for its state, or ends. */
-export async function runJob(jobId: string, deps: RunnerDeps = defaultRunnerDeps()): Promise<Job> {
+export async function runJob(jobId: string, deps: RunnerDeps = defaultRunnerDeps(jobId)): Promise<Job> {
   const ctx = contextFor(jobId, deps);
   for (let guard = 0; guard < 50; guard++) {
     deps.store.expireTimedOut();

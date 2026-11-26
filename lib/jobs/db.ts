@@ -86,6 +86,11 @@ const MIGRATIONS: string[] = [
   ALTER TABLE jobs ADD COLUMN publish_bundle TEXT;
   ALTER TABLE jobs ADD COLUMN publish_result TEXT;
   `,
+  // v7 (SIL-543): associate jobs with the signed-in user who created them so
+  // background provisioning, planning, and publishing use their linked GitHub account.
+  `
+  ALTER TABLE jobs ADD COLUMN created_by_user_id TEXT;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

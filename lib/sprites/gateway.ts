@@ -35,6 +35,8 @@ const SEG = "[A-Za-z0-9._-]+";
 const allowedRoutes: ReadonlyArray<{ method: HttpMethod; pattern: RegExp; purpose: string }> = [
   { method: "GET", pattern: /^\/user$/, purpose: "identify connected account" },
   { method: "GET", pattern: /^\/user\/repos$/, purpose: "list repositories" },
+  { method: "GET", pattern: /^\/user\/installations$/, purpose: "list GitHub App installations" },
+  { method: "GET", pattern: /^\/user\/installations\/\d+\/repositories$/, purpose: "list repositories in a GitHub App installation" },
   { method: "GET", pattern: new RegExp(`^/repos/${SEG}/${SEG}$`), purpose: "repository metadata" },
   { method: "GET", pattern: new RegExp(`^/repos/${SEG}/${SEG}/issues$`), purpose: "list issues" },
   { method: "GET", pattern: new RegExp(`^/repos/${SEG}/${SEG}/issues/\\d+$`), purpose: "issue detail" },

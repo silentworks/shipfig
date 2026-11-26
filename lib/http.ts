@@ -4,6 +4,7 @@ import { GatewayError } from "@/lib/sprites/gateway";
 import { ActiveJobExistsError, InvalidTransitionError, JobNotFoundError } from "@/lib/jobs/store";
 import { redact } from "@/lib/redact";
 import { RepoNotAllowedError } from "@/lib/github/connector";
+import { GitHubNotConnectedError } from "@/lib/github/user-client";
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
@@ -25,9 +26,21 @@ export function errorResponse(error: unknown): Response {
   }
   if (error instanceof InvalidTransitionError) return jsonError(409, "invalid_transition", error.message);
   if (error instanceof RepoNotAllowedError) return jsonError(403, "repo_not_allowed", error.message);
+  if (error instanceof GitHubNotConnectedError) return jsonError(412, "github_not_connected", error.message);
   if (error instanceof EnvError) return jsonError(503, "not_configured", error.message);
   if (error instanceof GatewayError) {
-    const status = error.kind === "not_found" ? 404 : error.kind === "rate_limited" ? 429 : error.kind === "policy" ? 400 : 502;
+    const status =
+      error.kind === "unauthorized"
+        ? 401
+        : error.kind === "forbidden"
+          ? 403
+          : error.kind === "not_found"
+            ? 404
+            : error.kind === "rate_limited"
+              ? 429
+              : error.kind === "policy"
+                ? 400
+                : 502;
     return jsonError(status, `github_${error.kind}`, error.message);
   }
   console.error("[shipfig] unexpected API error:", redact(error instanceof Error ? (error.stack ?? error.message) : String(error)));
