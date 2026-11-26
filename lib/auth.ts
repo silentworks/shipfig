@@ -28,6 +28,14 @@ export const auth = betterAuth({
     accountLinking: {
       enabled: true,
       trustedProviders: ["github"],
+      // Shipfig does not send email-verification emails on password sign-up,
+      // so allow trusted GitHub OAuth sign-in to link onto an existing local account.
+      requireLocalEmailVerified: false,
+    },
+  },
+  advanced: {
+    ipAddress: {
+      ipAddressHeaders: ["fly-client-ip", "x-forwarded-for"],
     },
   },
   ...(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET

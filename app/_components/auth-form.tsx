@@ -12,16 +12,30 @@ function safeNextPath(raw: string | null): string {
   return raw;
 }
 
+function formatAuthError(code: string | null): string | null {
+  if (!code) return null;
+  switch (code) {
+    case "account_not_linked":
+      return "An account with this email already exists. Sign in with your password first, then connect GitHub in Settings.";
+    case "access_denied":
+      return "GitHub sign-in was canceled.";
+    default:
+      return `Authentication failed (${code.replace(/_/g, " ")}).`;
+  }
+}
+
 export function AuthForm({ mode, githubEnabled }: { mode: "sign-in" | "sign-up"; githubEnabled: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = safeNextPath(searchParams.get("next"));
+  const urlError = formatAuthError(searchParams.get("error"));
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const visibleError = error ?? urlError;
 
   const isSignUp = mode === "sign-up";
 
@@ -64,6 +78,7 @@ export function AuthForm({ mode, githubEnabled }: { mode: "sign-in" | "sign-up";
       const result = await signIn.social({
         provider: "github",
         callbackURL: nextPath,
+        errorCallbackURL: "/sign-in",
       });
       if (result?.error) {
         setError(result.error.message || "GitHub sign-in failed");
@@ -90,9 +105,9 @@ export function AuthForm({ mode, githubEnabled }: { mode: "sign-in" | "sign-up";
           </p>
         </div>
 
-        {error && (
+        {visibleError && (
           <div className="mb-4">
-            <ErrorNotice message={error} />
+            <ErrorNotice message={visibleError} />
           </div>
         )}
 
