@@ -1,6 +1,7 @@
 "use client";
 
 import type { Job, TestResult } from "@/lib/jobs/store";
+import { splitUnifiedDiff } from "@/lib/verify/diff-split";
 import type { VerificationOutcome } from "@/lib/verify/evidence";
 import { type BadgeTone, CollapsiblePanel, Muted, Panel, StatusBadge } from "./ui";
 
@@ -185,10 +186,15 @@ export function ReviewView({ job }: { job: Job }) {
   );
 }
 
-/** Clean file summary + unified diff viewer. */
+/** Per-file diff viewer: renders each changed file's diff under its own filename header. */
 export function DiffView({ job }: { job: Job }) {
   const v = job.verification;
   if (!job.diff) return null;
+
+  const sections = splitUnifiedDiff(job.diff);
+  const metaByPath = new Map((v?.diff.files ?? []).map((f) => [f.path, f]));
+  const renderedPaths = new Set(sections.map((s) => s.path));
+  const missingFiles = (v?.diff.files ?? []).filter((f) => !renderedPaths.has(f.path));
 
   return (
     <Panel
@@ -206,36 +212,78 @@ export function DiffView({ job }: { job: Job }) {
       }
     >
       <div className="flex flex-col gap-3">
-        {v && v.diff.files.length > 0 && (
-          <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200/80 text-xs dark:divide-zinc-900 dark:border-zinc-800/80">
-            {v.diff.files.map((f) => (
-              <li key={f.path} className="flex items-center justify-between gap-3 px-3 py-1.5">
-                <span className="min-w-0 truncate font-mono text-zinc-800 dark:text-zinc-200">{f.path}</span>
+        {sections.map((section, idx) => {
+          const meta = metaByPath.get(section.path);
+          const isBinary = section.isBinary || meta?.additions === null;
+          const additions = meta?.additions ?? section.additions;
+          const deletions = meta?.deletions ?? section.deletions;
+          return (
+            <details
+              key={`${section.path}-${idx}`}
+              open
+              className="group overflow-hidden rounded-lg border border-zinc-200/80 bg-white dark:border-zinc-800/80 dark:bg-zinc-950"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-zinc-50/80 px-3.5 py-2 text-xs select-none hover:bg-zinc-100/70 dark:bg-zinc-900/60 dark:hover:bg-zinc-900">
+                <span className="flex min-w-0 items-center gap-2">
+                  <svg
+                    aria-hidden
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform duration-150 group-open:rotate-90"
+                  >
+                    <path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="truncate font-mono font-medium text-zinc-900 dark:text-zinc-100">{section.path}</span>
+                  {meta?.status && (
+                    <span className="shrink-0 rounded border border-zinc-200/80 bg-white px-1.5 py-0 text-[10px] font-medium text-zinc-500 dark:border-zinc-700/80 dark:bg-zinc-950 dark:text-zinc-400">
+                      {meta.status}
+                    </span>
+                  )}
+                </span>
                 <span className="shrink-0 font-mono text-[11px]">
-                  {f.additions === null ? (
+                  {isBinary ? (
                     <span className="text-zinc-500">binary</span>
                   ) : (
                     <>
-                      <span className="text-emerald-600 dark:text-emerald-400">+{f.additions}</span>{" "}
-                      <span className="text-red-600 dark:text-red-400">−{f.deletions}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">+{additions}</span>{" "}
+                      <span className="text-red-600 dark:text-red-400">−{deletions}</span>
                     </>
                   )}
                 </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <pre
-          tabIndex={0}
-          aria-label="Unified diff"
-          className="max-h-[34rem] overflow-auto rounded-lg border border-zinc-200/80 bg-zinc-50/70 font-mono text-xs leading-5 dark:border-zinc-800/80 dark:bg-zinc-950"
-        >
-          {job.diff.split("\n").map((line, i) => (
-            <div key={i} className={`whitespace-pre px-3 ${lineClass(line)}`}>
-              {line || " "}
-            </div>
-          ))}
-        </pre>
+              </summary>
+              <div className="border-t border-zinc-200/80 dark:border-zinc-800/80">
+                {isBinary ? (
+                  <p className="px-3.5 py-3 text-xs text-zinc-500">Binary file changed.</p>
+                ) : section.lines.length === 0 ? (
+                  <p className="px-3.5 py-3 text-xs text-zinc-500">No text line changes.</p>
+                ) : (
+                  <pre
+                    tabIndex={0}
+                    aria-label={`Diff for ${section.path}`}
+                    className="max-h-[28rem] overflow-auto bg-zinc-50/40 py-1 font-mono text-xs leading-5 dark:bg-zinc-950"
+                  >
+                    {section.lines.map((line, i) => (
+                      <div key={i} className={`whitespace-pre px-3.5 ${lineClass(line)}`}>
+                        {line || " "}
+                      </div>
+                    ))}
+                  </pre>
+                )}
+              </div>
+            </details>
+          );
+        })}
+
+        {missingFiles.map((f) => (
+          <div
+            key={f.path}
+            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200/80 bg-zinc-50/60 px-3.5 py-2 text-xs dark:border-zinc-800/80 dark:bg-zinc-900/40"
+          >
+            <span className="truncate font-mono font-medium text-zinc-800 dark:text-zinc-200">{f.path}</span>
+            <span className="shrink-0 text-zinc-500">Diff truncated for display</span>
+          </div>
+        ))}
+
         {v?.diff.truncated && <p className="text-xs text-zinc-500">Diff truncated for display.</p>}
       </div>
     </Panel>
