@@ -149,7 +149,8 @@ export async function getSessionFromHeaders(headers: Headers): Promise<{ user: {
         email: result.user.email,
       },
     };
-  } catch {
+  } catch (error) {
+    console.error("[shipfig] getSessionFromHeaders failed:", error instanceof Error ? error.message : String(error));
     return null;
   }
 }
@@ -157,6 +158,10 @@ export async function getSessionFromHeaders(headers: Headers): Promise<{ user: {
 /**
  * Authenticate a request via Better Auth session or optional operator token.
  * Always requires valid credentials (no open fallback).
+ *
+ * Checks the Better Auth session cookie first so a stale browser HTTP Basic
+ * `Authorization` header (e.g. cached from an earlier operator-token deploy)
+ * never blocks a valid signed-in session.
  */
 export async function authenticateRequest(
   headers: Headers,
@@ -165,7 +170,21 @@ export async function authenticateRequest(
   const env = options.env ?? accessEnv();
   const getSession = options.getSession ?? getSessionFromHeaders;
 
-  // 1. Optional headless/CLI fallback when SHIPFIG_OPERATOR_TOKEN is set and Authorization is sent.
+  // 1. Better Auth session cookie.
+  const session = await getSession(headers);
+  if (session?.user) {
+    return {
+      ok: true,
+      identity: {
+        kind: "user",
+        userId: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+      },
+    };
+  }
+
+  // 2. Optional headless/CLI fallback when SHIPFIG_OPERATOR_TOKEN is set and Authorization is sent.
   if (env.token) {
     if (env.token.length < MIN_TOKEN_LENGTH) {
       return {
@@ -182,20 +201,6 @@ export async function authenticateRequest(
       }
       return { ok: false, status: 401, code: "unauthorized", message: "Invalid operator token", challenge: true };
     }
-  }
-
-  // 2. Better Auth session cookie.
-  const session = await getSession(headers);
-  if (session?.user) {
-    return {
-      ok: true,
-      identity: {
-        kind: "user",
-        userId: session.user.id,
-        name: session.user.name,
-        email: session.user.email,
-      },
-    };
   }
 
   return { ok: false, status: 401, code: "unauthorized", message: "Authentication required" };

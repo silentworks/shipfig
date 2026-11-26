@@ -59,6 +59,16 @@ describe("authentication (Better Auth session + optional operator token)", () =>
 
     const unauthed = await authenticateRequest(headers({}), { env: { token: undefined, production: false }, getSession: noSession });
     expect(unauthed).toMatchObject({ ok: false, status: 401, code: "unauthorized" });
+
+    // A stale/invalid browser Basic Auth header must not block a valid Better Auth session.
+    const withStaleBasic = await authenticateRequest(headers({ authorization: basic("logout", "logout") }), {
+      env,
+      getSession: withSession,
+    });
+    expect(withStaleBasic).toEqual({
+      ok: true,
+      identity: { kind: "user", userId: ALICE.id, name: ALICE.name, email: ALICE.email },
+    });
   });
 
   it("redirects unauthenticated page requests to /sign-in and returns 401 for API requests", async () => {
