@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { EnvError } from "@/lib/env";
 import { GatewayError } from "@/lib/sprites/gateway";
-import { ActiveJobExistsError, InvalidTransitionError, JobNotFoundError } from "@/lib/jobs/store";
+import { ActiveJobExistsError, InvalidTransitionError, JobNotFoundError, QueueFullError } from "@/lib/jobs/store";
 import { redact } from "@/lib/redact";
 import { RepoNotAllowedError } from "@/lib/github/connector";
 import { GitHubNotConnectedError } from "@/lib/github/user-client";
@@ -23,6 +23,9 @@ export function errorResponse(error: unknown): Response {
   if (error instanceof JobNotFoundError) return jsonError(404, "not_found", error.message);
   if (error instanceof ActiveJobExistsError) {
     return jsonError(409, "active_job_exists", error.message, { activeJobId: error.activeJobId });
+  }
+  if (error instanceof QueueFullError) {
+    return jsonError(409, "queue_full", error.message, { limit: error.limit });
   }
   if (error instanceof InvalidTransitionError) return jsonError(409, "invalid_transition", error.message);
   if (error instanceof RepoNotAllowedError) return jsonError(403, "repo_not_allowed", error.message);

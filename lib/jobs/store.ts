@@ -141,6 +141,16 @@ export class ActiveJobExistsError extends Error {
   }
 }
 
+/** Max waiting jobs allowed in the queue behind the active job. */
+export const MAX_QUEUED_JOBS = 20;
+
+export class QueueFullError extends Error {
+  constructor(public readonly limit: number) {
+    super(`Job queue is full (maximum ${limit} queued jobs); wait for a job to finish or cancel one before adding more`);
+    this.name = "QueueFullError";
+  }
+}
+
 /** Fields a transition may set alongside the state change. */
 export interface JobPatch {
   spriteName?: string;
@@ -325,16 +335,42 @@ export class JobStore {
       );
   }
 
-  /** The current non-terminal job, if any. */
+  /** The current active (running or awaiting human approval) job, if any. */
   activeJob(): Job | undefined {
     const row = this.db.prepare("SELECT * FROM jobs WHERE active = 1").get() as Row | undefined;
     return row ? rowToJob(row) : undefined;
   }
 
+  /** Jobs waiting in the FIFO queue behind the active job. */
+  queuedJobs(): Job[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE state = 'queued' AND active IS NULL
+         ORDER BY state_entered_at ASC, created_at ASC, id ASC`,
+      )
+      .all() as Row[];
+    return rows.map(rowToJob);
+  }
+
+  /** 1-based queue position if the job is waiting behind an active job, otherwise null. */
+  queuePosition(id: string): number | null {
+    const idx = this.queuedJobs().findIndex((j) => j.id === id);
+    return idx >= 0 ? idx + 1 : null;
+  }
+
+  private waitingQueueCount(): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS count FROM jobs WHERE state = 'queued' AND active IS NULL")
+      .get() as { count: number };
+    return Number(row.count);
+  }
+
   /**
-   * Create a queued job for an explicitly selected issue. Rejects if another
-   * job is active (checked in the transaction and enforced by a unique index,
-   * so concurrent starts cannot both succeed).
+   * Create a job for an explicitly selected issue. If no job is active, it
+   * becomes active immediately (`active = 1`). Otherwise it enters the FIFO
+   * queue (`state = 'queued', active = NULL, deadline_at = NULL`) and starts
+   * automatically when the active job finishes.
    */
   create(input: NewJobInput, now = new Date()): Job {
     const ref = issueRefSchema.parse(input);
@@ -343,12 +379,18 @@ export class JobStore {
     try {
       this.tx(() => {
         const active = this.activeJob();
-        if (active) throw new ActiveJobExistsError(active.id);
+        const isWaiting = Boolean(active);
+        let queuePos = 0;
+        if (isWaiting) {
+          const count = this.waitingQueueCount();
+          if (count >= MAX_QUEUED_JOBS) throw new QueueFullError(MAX_QUEUED_JOBS);
+          queuePos = count + 1;
+        }
         this.db
           .prepare(
             `INSERT INTO jobs (id, repo_owner, repo_name, issue_number, issue_title, issue_url, created_by_user_id, state, active,
                sprite_name, created_at, updated_at, state_entered_at, deadline_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             id,
@@ -358,13 +400,17 @@ export class JobStore {
             sanitizeOutput(input.issueTitle, 500),
             input.issueUrl,
             input.createdByUserId ?? null,
+            isWaiting ? null : 1,
             spriteNameForJob(id),
             at,
             at,
             at,
-            deadlineFor("queued", now),
+            isWaiting ? null : deadlineFor("queued", now),
           );
-        this.insertEvent(id, at, "transition", `Job created for ${ref.owner}/${ref.repo}#${ref.issueNumber}`, { to: "queued" });
+        const message = isWaiting
+          ? `Queued (#${queuePos}) for ${ref.owner}/${ref.repo}#${ref.issueNumber} behind job ${active!.id}`
+          : `Job created for ${ref.owner}/${ref.repo}#${ref.issueNumber}`;
+        this.insertEvent(id, at, "transition", message, { to: "queued" });
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -374,6 +420,44 @@ export class JobStore {
       throw error;
     }
     return this.get(id);
+  }
+
+  /**
+   * Promote the oldest waiting queued job into the active slot if no job is
+   * currently active. Atomic via BEGIN IMMEDIATE and the unique active index.
+   */
+  promoteNext(now = new Date()): Job | undefined {
+    const at = now.toISOString();
+    let promotedId: string | undefined;
+    try {
+      this.tx(() => {
+        if (this.activeJob()) return;
+        const row = this.db
+          .prepare(
+            `SELECT * FROM jobs
+             WHERE state = 'queued' AND active IS NULL
+             ORDER BY state_entered_at ASC, created_at ASC, id ASC
+             LIMIT 1`,
+          )
+          .get() as Row | undefined;
+        if (!row) return;
+        const next = rowToJob(row);
+        const result = this.db
+          .prepare(
+            `UPDATE jobs
+             SET active = 1, version = version + 1, updated_at = ?, state_entered_at = ?, deadline_at = ?
+             WHERE id = ? AND version = ? AND state = 'queued' AND active IS NULL`,
+          )
+          .run(at, at, deadlineFor("queued", now), next.id, next.version);
+        if (result.changes !== 1) return;
+        this.insertEvent(next.id, at, "info", "Promoted from queue; starting now");
+        promotedId = next.id;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) return undefined;
+      throw error;
+    }
+    return promotedId ? this.get(promotedId) : undefined;
   }
 
   find(id: string): Job | undefined {
@@ -430,8 +514,19 @@ export class JobStore {
         const isRetry = job.state === "failed" && to === "queued";
         const terminal = isTerminal(to);
 
+        // A retried job re-entering `queued` while another job is active waits
+        // in the FIFO queue (active = NULL, deadline_at = NULL) instead of failing.
+        let retryQueued = false;
+        if (isRetry && this.activeJob()) {
+          if (this.waitingQueueCount() >= MAX_QUEUED_JOBS) throw new QueueFullError(MAX_QUEUED_JOBS);
+          retryQueued = true;
+        }
+
         if (to === "failed" && !patch.failureReason) patch.failureReason = "error";
         if (to === "canceled" && !patch.cancelReason) patch.cancelReason = "user_canceled";
+
+        const nextActive = terminal || retryQueued ? null : 1;
+        const nextDeadline = retryQueued ? null : deadlineFor(to, now);
 
         const sets: string[] = [
           "state = ?",
@@ -442,7 +537,7 @@ export class JobStore {
           "deadline_at = ?",
           "finished_at = ?",
         ];
-        const values: (string | number | null)[] = [to, terminal ? null : 1, at, at, deadlineFor(to, now), terminal ? at : null];
+        const values: (string | number | null)[] = [to, nextActive, at, at, nextDeadline, terminal ? at : null];
 
         if (isRepair) sets.push("retry_count = retry_count + 1");
         if (isRetry) {

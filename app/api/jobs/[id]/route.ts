@@ -13,7 +13,12 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/jobs/[id
     const store = jobStore();
     // Timed-out jobs become failed here; let the runner clean up their sprites.
     for (const expired of store.expireTimedOut()) after(() => startJobInBackground(expired.id));
-    return Response.json({ job: store.get(id), events: store.events(id, afterEvent) });
+    return Response.json({
+      job: store.get(id),
+      events: store.events(id, afterEvent),
+      queuePosition: store.queuePosition(id),
+      activeJobId: store.activeJob()?.id ?? null,
+    });
   } catch (error) {
     return errorResponse(error);
   }

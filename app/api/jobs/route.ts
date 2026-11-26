@@ -15,7 +15,11 @@ export async function GET() {
   try {
     const store = jobStore();
     for (const expired of store.expireTimedOut()) after(() => startJobInBackground(expired.id));
-    return Response.json({ jobs: store.list(50), activeJobId: store.activeJob()?.id ?? null });
+    return Response.json({
+      jobs: store.list(50),
+      activeJobId: store.activeJob()?.id ?? null,
+      queuedJobIds: store.queuedJobs().map((j) => j.id),
+    });
   } catch (error) {
     return errorResponse(error);
   }
@@ -45,13 +49,7 @@ export async function POST(request: Request) {
     }
     const ref = createJobSchema.parse(body);
     const store = jobStore();
-    store.expireTimedOut();
-    const active = store.activeJob();
-    if (active) {
-      return jsonError(409, "active_job_exists", `Job ${active.id} is already active; only one job may run at a time`, {
-        activeJobId: active.id,
-      });
-    }
+    for (const expired of store.expireTimedOut()) after(() => startJobInBackground(expired.id));
     const [gh, userSelectedRepos] = await Promise.all([
       resolveGitHubRequest(guard.identity),
       guard.identity.kind === "user" && guard.identity.userId ? getUserSelectedRepos(guard.identity.userId) : Promise.resolve([]),
@@ -60,8 +58,11 @@ export async function POST(request: Request) {
     if (issue.state !== "open") return jsonError(409, "issue_not_open", `Issue #${issue.number} is ${issue.state}`);
     const createdByUserId = guard.identity.kind === "user" ? (guard.identity.userId ?? null) : null;
     const job = store.create({ ...ref, issueTitle: issue.title, issueUrl: issue.url, createdByUserId });
-    after(() => startJobInBackground(job.id));
-    return Response.json({ job }, { status: 201 });
+    const queuePosition = store.queuePosition(job.id);
+    if (queuePosition === null) {
+      after(() => startJobInBackground(job.id));
+    }
+    return Response.json({ job, queued: queuePosition !== null, queuePosition }, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }

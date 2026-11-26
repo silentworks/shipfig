@@ -41,6 +41,8 @@ export interface RunnerDeps {
   destroySandbox(name: string): Promise<boolean>;
   /** Writes the approved bundle to GitHub (branch + draft PR) via the trusted gateway. */
   publish: typeof publishBundleToGitHub;
+  /** Called when a terminal job promotes the next waiting queued job. */
+  onPromote?: (jobId: string) => void;
 }
 
 export interface StageContext {
@@ -67,6 +69,8 @@ const sandboxes = new Map<string, Sandbox>();
 
 const stages: Partial<Record<JobState, Stage>> = {
   async queued(job, { deps }) {
+    // Only the active job may provision a sprite; waiting jobs stay queued until promoted.
+    if (deps.store.activeJob()?.id !== job.id) return;
     deps.store.transition(job.id, "provisioning", { expectedState: "queued", expectedVersion: job.version });
   },
 
@@ -415,6 +419,9 @@ export function defaultRunnerDeps(jobId?: string): RunnerDeps {
       const { request } = await jobContext();
       return publishBundleToGitHub(ref, bundle, draft, { ...options, request: options?.request ?? request });
     },
+    onPromote(nextJobId) {
+      kickJob(nextJobId).catch(() => {});
+    },
   };
 }
 
@@ -453,6 +460,9 @@ export async function runJob(jobId: string, deps: RunnerDeps = defaultRunnerDeps
     const job = deps.store.get(jobId);
     if (isTerminal(job.state)) {
       await cleanup(job, deps);
+      // Now that the finished job's sprite is cleaned up, promote and start the next queued job.
+      const next = deps.store.promoteNext();
+      if (next) deps.onPromote?.(next.id);
       return job;
     }
     const stage = stages[job.state];

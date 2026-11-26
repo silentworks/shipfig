@@ -34,7 +34,7 @@ export function JobsList() {
   const pathname = usePathname();
   const selectedJobId = pathname.startsWith("/jobs/") ? pathname.slice("/jobs/".length) : null;
 
-  const [data, setData] = useState<{ jobs: Job[]; activeJobId: string | null } | null>(null);
+  const [data, setData] = useState<{ jobs: Job[]; activeJobId: string | null; queuedJobIds?: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<JobFilter>("all");
   const [query, setQuery] = useState("");
@@ -50,7 +50,7 @@ export function JobsList() {
         return;
       }
       try {
-        const res = await fetchJson<{ jobs: Job[]; activeJobId: string | null }>("/api/jobs");
+        const res = await fetchJson<{ jobs: Job[]; activeJobId: string | null; queuedJobIds?: string[] }>("/api/jobs");
         if (!stopped) {
           setData(res);
           setError(null);
@@ -202,6 +202,8 @@ export function JobsList() {
             {filtered.map((job) => {
               const selected = job.id === selectedJobId;
               const isActive = job.id === data.activeJobId;
+              const queueIdx = data.queuedJobIds?.indexOf(job.id) ?? -1;
+              const queuePosition = queueIdx >= 0 ? queueIdx + 1 : null;
               return (
                 <li key={job.id}>
                   <Link
@@ -250,6 +252,11 @@ export function JobsList() {
                       {isActive && (
                         <span className="rounded border border-sky-200/80 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:border-sky-800/60 dark:bg-sky-950/60 dark:text-sky-300">
                           Active
+                        </span>
+                      )}
+                      {queuePosition !== null && (
+                        <span className="rounded border border-amber-200/80 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/60 dark:text-amber-300">
+                          Queue #{queuePosition}
                         </span>
                       )}
                       {job.prUrl && (

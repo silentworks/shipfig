@@ -243,6 +243,17 @@ describe("startup recovery", () => {
     expect(store.get(job.id).state).toBe("awaiting_plan_approval");
   });
 
+  it("promotes the next queued job on startup when no job is active", async () => {
+    const first = create();
+    const second = store.create({ owner: "acme", repo: "web", issueNumber: 2, issueTitle: "t2", issueUrl: "u2" });
+    store.cancel(first.id);
+    const d = deps();
+    const report = await recoverJobs(d);
+    expect(report.resumed).toEqual([second.id]);
+    expect(store.activeJob()?.id).toBe(second.id);
+    expect(d.kick).toHaveBeenCalledWith(second.id);
+  });
+
   it("deletes sprites of this instance's finished jobs only", async () => {
     const done = create();
     store.cancel(done.id);

@@ -59,6 +59,10 @@ export async function recoverJobs(deps: RecoveryDeps): Promise<RecoveryReport> {
       store.log(active.id, "info", `Resuming after a server restart (${active.state})`);
       report.resumed.push(active.id);
     }
+  } else {
+    // No active job at startup: promote the next waiting queued job, if any.
+    const promoted = store.promoteNext();
+    if (promoted) report.resumed.push(promoted.id);
   }
   // Terminal jobs still need their sprite cleanup, and resumed jobs need driving.
   for (const id of report.resumed.concat(report.interrupted)) deps.kick(id);

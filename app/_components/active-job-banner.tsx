@@ -14,17 +14,21 @@ const NEEDS_YOU = new Set<Job["state"]>(["awaiting_plan_approval", "awaiting_pub
  * Shows the one active job (Shipfig runs one at a time) with a direct link to
  * its page, so a job in progress or awaiting approval is always one click away.
  */
-export function ActiveJobBanner() {
+export function ActiveJobBanner({ onActiveChange }: { onActiveChange?: (hasActiveJob: boolean) => void } = {}) {
   const [job, setJob] = useState<Job | null>(null);
+  const [queuedCount, setQueuedCount] = useState(0);
 
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function poll() {
       try {
-        const data = await fetchJson<{ jobs: Job[]; activeJobId: string | null }>("/api/jobs");
+        const data = await fetchJson<{ jobs: Job[]; activeJobId: string | null; queuedJobIds?: string[] }>("/api/jobs");
         if (stopped) return;
-        setJob(data.jobs.find((j) => j.id === data.activeJobId) ?? null);
+        const active = data.jobs.find((j) => j.id === data.activeJobId) ?? null;
+        setJob(active);
+        setQueuedCount(data.queuedJobIds?.length ?? 0);
+        onActiveChange?.(active !== null);
       } catch {
         // The banner is a convenience: keep the last known state and try again.
       }
@@ -35,7 +39,7 @@ export function ActiveJobBanner() {
       stopped = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [onActiveChange]);
 
   if (!job) return null;
   const needsYou = NEEDS_YOU.has(job.state);
@@ -61,16 +65,26 @@ export function ActiveJobBanner() {
           <span className="font-medium">{job.issueTitle}</span>
         </p>
       </div>
-      <Link
-        href={`/jobs/${job.id}`}
-        className={`shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 ${
-          needsYou
-            ? "bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400"
-            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        }`}
-      >
-        {needsYou ? "Review now →" : "Open job →"}
-      </Link>
+      <div className="flex shrink-0 items-center gap-2">
+        {queuedCount > 0 && (
+          <Link
+            href="/jobs"
+            className="rounded-md border border-zinc-200/80 bg-zinc-50 px-2 py-1 text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700/80 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            +{queuedCount} queued
+          </Link>
+        )}
+        <Link
+          href={`/jobs/${job.id}`}
+          className={`shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 ${
+            needsYou
+              ? "bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400"
+              : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          }`}
+        >
+          {needsYou ? "Review now →" : "Open job →"}
+        </Link>
+      </div>
     </div>
   );
 }
