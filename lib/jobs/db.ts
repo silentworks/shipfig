@@ -91,6 +91,10 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE jobs ADD COLUMN created_by_user_id TEXT;
   `,
+  // v8 (SIL-551): fast FIFO lookup for queued jobs waiting behind an active job.
+  `
+  CREATE INDEX jobs_queued_fifo ON jobs(state_entered_at ASC, created_at ASC, id ASC) WHERE state = 'queued' AND active IS NULL;
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

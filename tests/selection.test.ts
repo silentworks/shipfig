@@ -146,8 +146,11 @@ describe("POST /api/jobs", () => {
 
   beforeEach(() => {
     vi.stubEnv("SHIPFIG_OPERATOR_TOKEN", TEST_TOKEN);
-    const active = jobStore().activeJob();
-    if (active) jobStore().cancel(active.id);
+    background.start.mockReset();
+    const store = jobStore();
+    for (const q of store.queuedJobs()) store.cancel(q.id);
+    const active = store.activeJob();
+    if (active) store.cancel(active.id);
     routes({ "/repos/acme/web": repo("acme/web"), "/repos/acme/web/issues/5": issue(5), "/repos/acme/web/issues/6": issue(6, { state: "closed" }) });
   });
 
@@ -166,16 +169,24 @@ describe("POST /api/jobs", () => {
     expect(gateway.request).not.toHaveBeenCalled();
   });
 
-  it("creates a job from the server-fetched issue and blocks a second one", async () => {
+  it("creates a job from the server-fetched issue and queues a second one behind it", async () => {
     const res = await post({ owner: "acme", repo: "web", issueNumber: 5 });
     expect(res.status).toBe(201);
-    const { job } = await res.json();
-    expect(job).toMatchObject({ state: "queued", issueNumber: 5, issueTitle: "Issue 5", issueUrl: "https://github.com/acme/web/issues/5" });
-    expect(background.start).toHaveBeenCalledWith(job.id);
+    const first = await res.json();
+    expect(first.job).toMatchObject({ state: "queued", issueNumber: 5, issueTitle: "Issue 5", issueUrl: "https://github.com/acme/web/issues/5" });
+    expect(first.queued).toBe(false);
+    expect(first.queuePosition).toBeNull();
+    expect(background.start).toHaveBeenCalledTimes(1);
+    expect(background.start).toHaveBeenCalledWith(first.job.id);
 
     const second = await post({ owner: "acme", repo: "web", issueNumber: 5 });
-    expect(second.status).toBe(409);
-    expect((await second.json()).error.details.activeJobId).toBe(job.id);
+    expect(second.status).toBe(201);
+    const queued = await second.json();
+    expect(queued.job.state).toBe("queued");
+    expect(queued.queued).toBe(true);
+    expect(queued.queuePosition).toBe(1);
+    // Queued job does not start until the active job finishes.
+    expect(background.start).toHaveBeenCalledTimes(1);
   });
 
   it("refuses closed issues", async () => {

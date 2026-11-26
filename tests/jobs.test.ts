@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "@/lib/jobs/db";
+import { runJob, type RunnerDeps } from "@/lib/jobs/runner";
 import { JOB_STATES, MAX_ATTEMPTS, MAX_REPAIR_ATTEMPTS, TRANSITIONS, type JobState } from "@/lib/jobs/states";
-import { ActiveJobExistsError, InvalidTransitionError, JobStore } from "@/lib/jobs/store";
+import { InvalidTransitionError, JobStore, MAX_QUEUED_JOBS, QueueFullError } from "@/lib/jobs/store";
 
 const input = {
   owner: "acme",
@@ -104,12 +105,55 @@ describe("job lifecycle", () => {
   });
 });
 
-describe("one active job", () => {
-  it("rejects a second start while one is active", () => {
-    const first = store.create(input);
-    expect(() => store.create({ ...input, issueNumber: 8 })).toThrow(ActiveJobExistsError);
+describe("one active job & FIFO queue", () => {
+  it("queues additional jobs behind the active job and promotes them in FIFO order", () => {
+    const t0 = new Date("2026-01-01T00:00:00Z");
+    const t1 = new Date("2026-01-01T00:01:00Z");
+    const t2 = new Date("2026-01-01T00:02:00Z");
+    const first = store.create(input, t0);
+    const second = store.create({ ...input, issueNumber: 8 }, t1);
+    const third = store.create({ ...input, issueNumber: 9 }, t2);
+
+    expect(store.activeJob()?.id).toBe(first.id);
+    expect(store.queuedJobs().map((j) => j.id)).toEqual([second.id, third.id]);
+    expect(store.queuePosition(first.id)).toBeNull();
+    expect(store.queuePosition(second.id)).toBe(1);
+    expect(store.queuePosition(third.id)).toBe(2);
+    // Waiting jobs have no startup deadline until promoted.
+    expect(second.deadlineAt).toBeNull();
+    expect(store.expireTimedOut(new Date("2026-01-01T00:05:00Z"))).toHaveLength(0);
+
+    // Cannot promote while first is still active.
+    expect(store.promoteNext(t2)).toBeUndefined();
+
+    // Once first finishes, second promotes to active with a fresh deadline.
     store.cancel(first.id);
-    expect(store.create({ ...input, issueNumber: 8 }).state).toBe("queued");
+    const promoted = store.promoteNext(new Date("2026-01-01T00:03:00Z"));
+    expect(promoted?.id).toBe(second.id);
+    expect(promoted?.deadlineAt).not.toBeNull();
+    expect(store.activeJob()?.id).toBe(second.id);
+    expect(store.queuedJobs().map((j) => j.id)).toEqual([third.id]);
+    expect(store.queuePosition(third.id)).toBe(1);
+  });
+
+  it("allows canceling a waiting queued job without disturbing the active job", () => {
+    const first = store.create(input);
+    const second = store.create({ ...input, issueNumber: 8 });
+    const third = store.create({ ...input, issueNumber: 9 });
+
+    store.cancel(second.id);
+    expect(store.get(second.id).state).toBe("canceled");
+    expect(store.activeJob()?.id).toBe(first.id);
+    expect(store.queuedJobs().map((j) => j.id)).toEqual([third.id]);
+    expect(store.queuePosition(third.id)).toBe(1);
+  });
+
+  it(`caps the waiting queue at ${MAX_QUEUED_JOBS} jobs`, () => {
+    store.create(input);
+    for (let i = 0; i < MAX_QUEUED_JOBS; i++) {
+      store.create({ ...input, issueNumber: 100 + i });
+    }
+    expect(() => store.create({ ...input, issueNumber: 999 })).toThrow(QueueFullError);
   });
 
   it("is enforced by the database even if the app check is bypassed", () => {
@@ -126,11 +170,48 @@ describe("one active job", () => {
     expect(insert).toThrow(/UNIQUE/);
   });
 
-  it("blocks retry of a failed job while another is active", () => {
+  it("queues a retried failed job when another job is active", () => {
     const a = store.create(input);
     store.fail(a.id, "boom");
-    store.create({ ...input, issueNumber: 9 });
-    expect(() => store.retry(a.id)).toThrow(ActiveJobExistsError);
+    const b = store.create({ ...input, issueNumber: 9 });
+    const retried = store.retry(a.id);
+    expect(retried).toMatchObject({ state: "queued", attempt: 2, deadlineAt: null });
+    expect(store.activeJob()?.id).toBe(b.id);
+    expect(store.queuePosition(a.id)).toBe(1);
+  });
+
+  it("promotes and kicks the next queued job after runner cleans up a finished job", async () => {
+    const first = store.create(input);
+    const second = store.create({ ...input, issueNumber: 8 });
+    const destroyed: string[] = [];
+    const promoted: string[] = [];
+    const deps: RunnerDeps = {
+      store,
+      getAllowedRepo: vi.fn(),
+      getBranchHeadSha: vi.fn(),
+      getAllowedIssue: vi.fn(),
+      model: vi.fn(),
+      createSandbox: vi.fn(),
+      openSandbox: vi.fn(),
+      destroySandbox: vi.fn(async (name) => {
+        destroyed.push(name);
+        return true;
+      }),
+      publish: vi.fn(),
+      onPromote: (id) => promoted.push(id),
+    };
+
+    // Calling runJob on a still-waiting queued job is a safe no-op.
+    const untouched = await runJob(second.id, deps);
+    expect(untouched.state).toBe("queued");
+    expect(store.activeJob()?.id).toBe(first.id);
+
+    // Canceling the active job and running cleanup promotes and kicks the next queued job.
+    store.cancel(first.id);
+    await runJob(first.id, deps);
+    expect(destroyed).toEqual([first.spriteName]);
+    expect(store.activeJob()?.id).toBe(second.id);
+    expect(promoted).toEqual([second.id]);
   });
 });
 
@@ -217,7 +298,8 @@ describe("durability", () => {
       workspace: { scripts: { test: "vitest" } },
     });
     expect(s2.activeJob()?.id).toBe(job.id);
-    expect(() => s2.create(input)).toThrow(ActiveJobExistsError);
+    const queued = s2.create({ ...input, issueNumber: 8 });
+    expect(s2.queuePosition(queued.id)).toBe(1);
   });
 });
 

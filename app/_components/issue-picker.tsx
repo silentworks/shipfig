@@ -74,8 +74,13 @@ export function IssuePicker() {
   );
 
   const [filter, setFilter] = useState("");
-  const [starting, setStarting] = useState(false);
+  const [startingKey, setStartingKey] = useState<string | null>(null);
+  const [hasActiveJob, setHasActiveJob] = useState(false);
   const [startError, setStartError] = useState<{ message: string; activeJobId?: string } | null>(null);
+
+  const currentIssueKey = selectedRepo && selectedIssue ? `${selectedRepo}#${selectedIssue}` : null;
+  const starting = currentIssueKey !== null && startingKey === currentIssueKey;
+  const runLabel = starting ? (hasActiveJob ? "Queueing…" : "Starting…") : hasActiveJob ? "Add to queue" : "Run";
 
   // Auto-select the first eligible repository when landing on / with none chosen.
   useEffect(() => {
@@ -93,6 +98,7 @@ export function IssuePicker() {
     if (repo && iss) next.set("issue", String(iss));
     if (params.repo !== undefined && params.repo !== selectedRepo) setFilter("");
     setStartError(null);
+    setStartingKey(null);
     const qs = next.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
@@ -114,9 +120,9 @@ export function IssuePicker() {
   const repoShortName = selectedRepo ? selectedRepo.split("/")[1] ?? selectedRepo : null;
 
   async function run() {
-    if (!selectedRepo || !selectedIssue || !issueReady) return;
+    if (!selectedRepo || !selectedIssue || !issueReady || !currentIssueKey) return;
     const [owner, repo] = selectedRepo.split("/");
-    setStarting(true);
+    setStartingKey(currentIssueKey);
     setStartError(null);
     try {
       const { job } = await fetchJson<{ job: Job }>("/api/jobs", {
@@ -127,7 +133,7 @@ export function IssuePicker() {
     } catch (error) {
       const details = error instanceof ApiError ? (error.details as { activeJobId?: string } | undefined) : undefined;
       setStartError({ message: errorMessage(error as Error), activeJobId: details?.activeJobId });
-      setStarting(false);
+      setStartingKey(null);
     }
   }
 
@@ -337,7 +343,7 @@ export function IssuePicker() {
         {!selectedIssue ? (
           <div className="flex flex-1 flex-col justify-center p-6">
             <div className="mx-auto w-full max-w-md">
-              <ActiveJobBanner />
+              <ActiveJobBanner onActiveChange={setHasActiveJob} />
               <EmptyState
                 icon={
                   <svg aria-hidden viewBox="0 0 16 16" fill="none" className="h-4 w-4">
@@ -382,7 +388,7 @@ export function IssuePicker() {
                         View on GitHub ↗
                       </a>
                       <Button onClick={run} disabled={!issueReady || starting} aria-describedby="run-hint">
-                        {starting ? "Starting…" : "Run"}
+                        {runLabel}
                       </Button>
                     </div>
                   </div>
@@ -420,7 +426,7 @@ export function IssuePicker() {
               </p>
 
               <div className="mx-auto flex max-w-3xl flex-col gap-4">
-                <ActiveJobBanner />
+                <ActiveJobBanner onActiveChange={setHasActiveJob} />
 
                 {startError && (
                   <div>
@@ -478,10 +484,12 @@ export function IssuePicker() {
             {issue.status === "ok" && (
               <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-zinc-200/80 bg-white px-6 py-3 dark:border-zinc-800/80 dark:bg-zinc-950">
                 <p className="text-xs text-zinc-500">
-                  Shipfig drafts a plan for your approval before making any edits or opening a draft PR.
+                  {hasActiveJob
+                    ? "Another job is active — this issue will be queued and start automatically when it finishes."
+                    : "Shipfig drafts a plan for your approval before making any edits or opening a draft PR."}
                 </p>
                 <Button onClick={run} disabled={!issueReady || starting}>
-                  {starting ? "Starting…" : "Run"}
+                  {runLabel}
                 </Button>
               </footer>
             )}

@@ -36,9 +36,10 @@ function stateTone(job: Job): BadgeTone {
   return AWAITING_HUMAN_STATES.has(job.state) ? "waiting" : "working";
 }
 
-function useSpriteStatus(id: string, active: boolean) {
+function useSpriteStatus(id: string, active: boolean, enabled: boolean) {
   const [sprite, setSprite] = useState<{ name: string | null; status: string; checkedAt: string } | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function check() {
@@ -55,7 +56,7 @@ function useSpriteStatus(id: string, active: boolean) {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [id, active]);
+  }, [id, active, enabled]);
   return sprite;
 }
 
@@ -66,6 +67,8 @@ function useSpriteStatus(id: string, active: boolean) {
  */
 export function JobStatus({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null);
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,16 +87,24 @@ export function JobStatus({ id }: { id: string }) {
         return;
       }
       try {
-        const data = await fetchJson<{ job: Job; events: JobEvent[] }>(`/api/jobs/${id}?after=${lastEventId}`);
+        const data = await fetchJson<{
+          job: Job;
+          events: JobEvent[];
+          queuePosition?: number | null;
+          activeJobId?: string | null;
+        }>(`/api/jobs/${id}?after=${lastEventId}`);
         if (stopped) return;
         setJob(data.job);
+        setQueuePosition(data.queuePosition ?? null);
+        setActiveJobId(data.activeJobId ?? null);
         setError(null);
         const replace = first;
         first = false;
         if (data.events.length > 0) lastEventId = data.events[data.events.length - 1].id;
         if (replace || data.events.length > 0) setEvents((prev) => (replace ? data.events : [...prev, ...data.events]));
         if (!isTerminal(data.job.state)) {
-          timer = setTimeout(poll, AWAITING_HUMAN_STATES.has(data.job.state) ? POLL_WAITING_MS : POLL_WORKING_MS);
+          const isWaiting = AWAITING_HUMAN_STATES.has(data.job.state) || (data.job.state === "queued" && (data.queuePosition ?? null) !== null);
+          timer = setTimeout(poll, isWaiting ? POLL_WAITING_MS : POLL_WORKING_MS);
         }
       } catch (e) {
         if (stopped) return;
@@ -117,12 +128,13 @@ export function JobStatus({ id }: { id: string }) {
   }, [id, refresh]);
 
   const active = job ? !isTerminal(job.state) : true;
+  const isWaitingInQueue = job?.state === "queued" && queuePosition !== null;
   useEffect(() => {
     if (!active) return;
     const tick = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(tick);
   }, [active]);
-  const sprite = useSpriteStatus(id, active);
+  const sprite = useSpriteStatus(id, active, !isWaitingInQueue);
   const steps = useMemo(() => (job ? jobTimeline(job, events) : []), [job, events]);
 
   async function post(path: string, body?: unknown) {
@@ -172,6 +184,7 @@ export function JobStatus({ id }: { id: string }) {
               </Link>
               <StatusBadge tone={stateTone(job)}>
                 {STATE_LABELS[job.state]}
+                {isWaitingInQueue ? ` · #${queuePosition} in queue` : ""}
                 {reason ? ` · ${reason.replace(/_/g, " ")}` : ""}
               </StatusBadge>
               <a
@@ -212,7 +225,26 @@ export function JobStatus({ id }: { id: string }) {
             <h1 id="job-title" className="break-words text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {job.issueTitle}
             </h1>
-            <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{STATUS_SUMMARY[job.state]}</p>
+            <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
+              {isWaitingInQueue ? (
+                <>
+                  Waiting in queue (#{queuePosition}). Will start automatically when the active job finishes.
+                  {activeJobId && activeJobId !== job.id && (
+                    <>
+                      {" "}
+                      <Link
+                        href={`/jobs/${activeJobId}`}
+                        className="font-medium text-zinc-900 underline underline-offset-2 dark:text-zinc-100"
+                      >
+                        View active job →
+                      </Link>
+                    </>
+                  )}
+                </>
+              ) : (
+                STATUS_SUMMARY[job.state]
+              )}
+            </p>
           </div>
 
           <div className="pt-1">

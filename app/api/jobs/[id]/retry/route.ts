@@ -10,9 +10,13 @@ export async function POST(request: Request, ctx: RouteContext<"/api/jobs/[id]/r
   if (!guard.ok) return guard.response;
   try {
     const id = jobIdSchema.parse((await ctx.params).id);
-    const job = jobStore().retry(id);
-    after(() => startJobInBackground(id));
-    return Response.json({ job });
+    const store = jobStore();
+    const job = store.retry(id);
+    const queuePosition = store.queuePosition(job.id);
+    if (queuePosition === null) {
+      after(() => startJobInBackground(id));
+    }
+    return Response.json({ job, queued: queuePosition !== null, queuePosition });
   } catch (error) {
     return errorResponse(error);
   }

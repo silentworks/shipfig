@@ -134,7 +134,11 @@ function ThemeSelector({ mode, onChange }: { mode: ThemeMode; onChange: (mode: T
 }
 
 function useJobsOverview(enabled: boolean) {
-  const [data, setData] = useState<{ activeJob: Job | null; totalJobs: number }>({ activeJob: null, totalJobs: 0 });
+  const [data, setData] = useState<{ activeJob: Job | null; queuedCount: number; totalJobs: number }>({
+    activeJob: null,
+    queuedCount: 0,
+    totalJobs: 0,
+  });
 
   useEffect(() => {
     if (!enabled) return;
@@ -147,10 +151,11 @@ function useJobsOverview(enabled: boolean) {
         return;
       }
       try {
-        const res = await fetchJson<{ jobs: Job[]; activeJobId: string | null }>("/api/jobs");
+        const res = await fetchJson<{ jobs: Job[]; activeJobId: string | null; queuedJobIds?: string[] }>("/api/jobs");
         if (!stopped) {
           setData({
             activeJob: res.jobs.find((j) => j.id === res.activeJobId) ?? null,
+            queuedCount: res.queuedJobIds?.length ?? 0,
             totalJobs: res.jobs.length,
           });
         }
@@ -442,7 +447,7 @@ function UserAccountMenu({ compact = false }: { compact?: boolean }) {
 function AppShellInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isAuthRoute = pathname !== null && AUTH_ROUTES.has(pathname);
-  const { activeJob, totalJobs } = useJobsOverview(!isAuthRoute);
+  const { activeJob, queuedCount, totalJobs } = useJobsOverview(!isAuthRoute);
   const repoGroups = useSidebarRepos(!isAuthRoute);
   const { mode, selectMode } = useThemeMode();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -507,7 +512,10 @@ function AppShellInner({ children }: { children: ReactNode }) {
                 <span className="truncate">{needsYou ? "Needs your approval" : "Active job"}</span>
               </div>
               <p className="mt-1 truncate text-[11px] opacity-85">{activeJob.issueTitle}</p>
-              <p className="mt-0.5 truncate text-[11px] opacity-65">{STATE_LABELS[activeJob.state]}</p>
+              <p className="mt-0.5 truncate text-[11px] opacity-65">
+                {STATE_LABELS[activeJob.state]}
+                {queuedCount > 0 ? ` · ${queuedCount} queued` : ""}
+              </p>
             </Link>
           )}
 
