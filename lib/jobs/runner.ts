@@ -9,6 +9,7 @@ import { reviewChanges } from "@/lib/verify/review";
 import { getAllowedIssue, getAllowedRepo, getBranchHeadSha } from "@/lib/github/connector";
 import { PublishConflictError, publishBundleToGitHub } from "@/lib/github/publish";
 import { resolveJobGitHubRequest } from "@/lib/github/user-client";
+import { getUserSelectedRepos } from "@/lib/github/user-repos";
 import { BundleError, collectBundle } from "@/lib/publish/bundle";
 import { commitMessage, pullRequestBody, pullRequestTitle } from "@/lib/publish/pr-body";
 import type { Issue } from "@/lib/github/schemas";
@@ -383,27 +384,36 @@ export function registerStage(state: JobState, stage: Stage): void {
 
 export function defaultRunnerDeps(jobId?: string): RunnerDeps {
   const store = jobStore();
-  const githubRequest = async () => {
+  const jobContext = async () => {
     const job = jobId ? store.find(jobId) : undefined;
-    return resolveJobGitHubRequest(job?.createdByUserId ?? null);
+    const userId = job?.createdByUserId ?? null;
+    const [request, selectedRepos] = await Promise.all([
+      resolveJobGitHubRequest(userId),
+      userId ? getUserSelectedRepos(userId) : Promise.resolve([]),
+    ]);
+    return { request, selectedRepos };
   };
   return {
     store,
     async getAllowedRepo(ref) {
-      return getAllowedRepo(ref, await githubRequest());
+      const { request, selectedRepos } = await jobContext();
+      return getAllowedRepo(ref, request, selectedRepos);
     },
     async getBranchHeadSha(ref, branch) {
-      return getBranchHeadSha(ref, branch, await githubRequest());
+      const { request } = await jobContext();
+      return getBranchHeadSha(ref, branch, request);
     },
     async getAllowedIssue(ref) {
-      return getAllowedIssue(ref, await githubRequest());
+      const { request, selectedRepos } = await jobContext();
+      return getAllowedIssue(ref, request, selectedRepos);
     },
     model: agentModel,
     createSandbox: createJobSandbox,
     openSandbox: openJobSandbox,
     destroySandbox: destroyJobSandbox,
     async publish(ref, bundle, draft, options) {
-      return publishBundleToGitHub(ref, bundle, draft, { ...options, request: options?.request ?? (await githubRequest()) });
+      const { request } = await jobContext();
+      return publishBundleToGitHub(ref, bundle, draft, { ...options, request: options?.request ?? request });
     },
   };
 }

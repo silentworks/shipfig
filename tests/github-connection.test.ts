@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { listAllowedRepos } from "@/lib/github/connector";
 import {
+  type GitHubRequestFn,
   GitHubNotConnectedError,
   createUserGitHubRequest,
   resolveGitHubRequest,
   resolveJobGitHubRequest,
 } from "@/lib/github/user-client";
+import { combineAllowlists, normalizeRepoSelection } from "@/lib/github/user-repos";
 import { errorResponse } from "@/lib/http";
 import { openDatabase } from "@/lib/jobs/db";
 import { JobStore } from "@/lib/jobs/store";
@@ -138,5 +141,60 @@ describe("user GitHub REST client (SIL-543)", () => {
     });
     expect(job.createdByUserId).toBe("user_42");
     expect(store.get(job.id).createdByUserId).toBe("user_42");
+  });
+
+  it("normalizes and intersects user repository selections with server allowlists", () => {
+    expect(normalizeRepoSelection(["OctoCat/Hello", "octocat/hello", "acme/app"])).toEqual(["acme/app", "octocat/hello"]);
+    expect(() => normalizeRepoSelection(["not-a-repo"])).toThrow();
+
+    // Empty user selection keeps server allowlist as-is.
+    expect(combineAllowlists(["acme/one", "acme/two"], [])).toEqual(["acme/one", "acme/two"]);
+    // Empty server allowlist uses user selection.
+    expect(combineAllowlists([], ["acme/one"])).toEqual(["acme/one"]);
+    // Both set -> intersection (user can narrow, never widen).
+    expect(combineAllowlists(["acme/one", "acme/two"], ["acme/two", "other/evil"])).toEqual(["acme/two"]);
+  });
+
+  it("uses GitHub App installations when available and falls back to /user/repos for OAuth tokens", async () => {
+    const sampleRepo = (name: string) => ({
+      id: 1,
+      name,
+      full_name: `octocat/${name}`,
+      owner: { login: "octocat" },
+      private: false,
+      archived: false,
+      default_branch: "main",
+      html_url: `https://github.com/octocat/${name}`,
+      clone_url: `https://github.com/octocat/${name}.git`,
+      description: null,
+      open_issues_count: 1,
+    });
+
+    // GitHub App token: /user/installations returns 1 installation with only selected repos.
+    const appReq = vi.fn(async (path: string) => {
+      if (path === "/user/installations") return { status: 200, data: { installations: [{ id: 77 }] } };
+      if (path === "/user/installations/77/repositories") {
+        return { status: 200, data: { repositories: [sampleRepo("alpha"), sampleRepo("beta")] } };
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    const appListing = await listAllowedRepos(appReq as unknown as GitHubRequestFn, {
+      userSelectedRepos: ["octocat/beta"],
+      useAppInstallations: true,
+    });
+    expect(appListing.source).toBe("installations");
+    expect(appListing.repos.map((r) => r.fullName)).toEqual(["octocat/beta"]);
+
+    // Classic OAuth token: /user/installations returns 403, gracefully falls back to /user/repos.
+    const oauthReq = vi.fn(async (path: string) => {
+      if (path === "/user/installations") throw new GatewayError("Forbidden", "forbidden", 403);
+      if (path === "/user/repos") return { status: 200, data: [sampleRepo("gamma")] };
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    const oauthListing = await listAllowedRepos(oauthReq as unknown as GitHubRequestFn, { useAppInstallations: true });
+    expect(oauthListing.source).toBe("oauth");
+    expect(oauthListing.repos.map((r) => r.fullName)).toEqual(["octocat/gamma"]);
   });
 });

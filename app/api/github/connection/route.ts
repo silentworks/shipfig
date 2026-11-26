@@ -7,6 +7,8 @@ import {
   getUserGitHubAccount,
   hasOtherAuthMethod,
 } from "@/lib/github/user-client";
+import { clearUserSelectedRepos } from "@/lib/github/user-repos";
+import { manageOnGitHubUrl } from "@/app/api/github/repositories/route";
 import { errorResponse, jsonError } from "@/lib/http";
 import { GatewayError } from "@/lib/sprites/gateway";
 
@@ -16,6 +18,7 @@ export interface GitHubConnectionStatus {
   connected: boolean;
   needsReconnect: boolean;
   canDisconnect: boolean;
+  manageOnGitHubUrl: string;
   github: {
     login: string;
     url: string;
@@ -30,6 +33,7 @@ export async function GET(request: Request) {
   if (!authResult.ok) return deniedResponse(authResult);
 
   const oauthConfigured = Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
+  const manageUrl = manageOnGitHubUrl();
   const identity = authResult.identity ?? { kind: "operator" as const, name: "operator" };
 
   if (identity.kind === "operator" || !identity.userId) {
@@ -39,6 +43,7 @@ export async function GET(request: Request) {
       connected: true,
       needsReconnect: false,
       canDisconnect: false,
+      manageOnGitHubUrl: manageUrl,
       github: null,
     };
     return Response.json(status);
@@ -57,6 +62,7 @@ export async function GET(request: Request) {
         connected: false,
         needsReconnect: false,
         canDisconnect: false,
+        manageOnGitHubUrl: manageUrl,
         github: null,
       };
       return Response.json(status);
@@ -70,6 +76,7 @@ export async function GET(request: Request) {
         connected: true,
         needsReconnect: false,
         canDisconnect,
+        manageOnGitHubUrl: manageUrl,
         github: { login: viewer.login, url: viewer.url, scope: linked.scope },
       };
       return Response.json(status);
@@ -81,6 +88,7 @@ export async function GET(request: Request) {
           connected: false,
           needsReconnect: true,
           canDisconnect,
+          manageOnGitHubUrl: manageUrl,
           github: null,
         };
         return Response.json(status);
@@ -111,6 +119,7 @@ export async function DELETE(request: Request) {
       );
     }
     const disconnected = await disconnectUserGitHubAccount(guard.identity.userId);
+    await clearUserSelectedRepos(guard.identity.userId);
     return Response.json({ disconnected });
   } catch (error) {
     return errorResponse(error);

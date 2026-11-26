@@ -175,13 +175,20 @@ function useSidebarRepos(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    fetchJson<{ repos: Repo[] }>("/api/repos")
-      .then((res) => {
-        if (!cancelled) setRepos(res.repos);
-      })
-      .catch(() => {});
+    function load() {
+      fetchJson<{ repos: Repo[] }>("/api/repos")
+        .then((res) => {
+          if (!cancelled) setRepos(res.repos);
+        })
+        .catch(() => {
+          if (!cancelled) setRepos([]);
+        });
+    }
+    load();
+    window.addEventListener("shipfig:repos-changed", load);
     return () => {
       cancelled = true;
+      window.removeEventListener("shipfig:repos-changed", load);
     };
   }, [enabled]);
 

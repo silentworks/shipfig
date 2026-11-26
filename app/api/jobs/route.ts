@@ -3,6 +3,7 @@ import { after, connection } from "next/server";
 import { z } from "zod";
 import { getAllowedIssue } from "@/lib/github/connector";
 import { resolveGitHubRequest } from "@/lib/github/user-client";
+import { getUserSelectedRepos } from "@/lib/github/user-repos";
 import { errorResponse, jsonError } from "@/lib/http";
 import { startJobInBackground } from "@/lib/jobs/background";
 import { jobStore } from "@/lib/jobs/store";
@@ -51,8 +52,11 @@ export async function POST(request: Request) {
         activeJobId: active.id,
       });
     }
-    const gh = await resolveGitHubRequest(guard.identity);
-    const issue = await getAllowedIssue(ref, gh);
+    const [gh, userSelectedRepos] = await Promise.all([
+      resolveGitHubRequest(guard.identity),
+      guard.identity.kind === "user" && guard.identity.userId ? getUserSelectedRepos(guard.identity.userId) : Promise.resolve([]),
+    ]);
+    const issue = await getAllowedIssue(ref, gh, userSelectedRepos);
     if (issue.state !== "open") return jsonError(409, "issue_not_open", `Issue #${issue.number} is ${issue.state}`);
     const createdByUserId = guard.identity.kind === "user" ? (guard.identity.userId ?? null) : null;
     const job = store.create({ ...ref, issueTitle: issue.title, issueUrl: issue.url, createdByUserId });

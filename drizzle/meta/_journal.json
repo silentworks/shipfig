@@ -8,6 +8,13 @@
       "when": 1795623589330,
       "tag": "0000_closed_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795652609102,
+      "tag": "0001_rainy_richard_fisk",
+      "breakpoints": true
     }
   ]
 }
