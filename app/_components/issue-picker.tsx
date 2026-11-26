@@ -346,7 +346,7 @@ export function IssuePicker() {
                   </svg>
                 }
                 title="Select an issue"
-                description="Pick an issue from the list to inspect its details. When you click Run Shipfig, Shipfig drafts a plan for your approval before making any edits."
+                description="Pick an issue from the list to inspect its details. When you click Run, Shipfig drafts a plan for your approval before making any edits."
               />
             </div>
           </div>
@@ -382,7 +382,7 @@ export function IssuePicker() {
                         View on GitHub ↗
                       </a>
                       <Button onClick={run} disabled={!issueReady || starting} aria-describedby="run-hint">
-                        {starting ? "Starting…" : "Run Shipfig"}
+                        {starting ? "Starting…" : "Run"}
                       </Button>
                     </div>
                   </div>
@@ -481,7 +481,7 @@ export function IssuePicker() {
                   Shipfig drafts a plan for your approval before making any edits or opening a draft PR.
                 </p>
                 <Button onClick={run} disabled={!issueReady || starting}>
-                  {starting ? "Starting…" : "Run Shipfig"}
+                  {starting ? "Starting…" : "Run"}
                 </Button>
               </footer>
             )}

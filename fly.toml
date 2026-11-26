@@ -8,9 +8,9 @@ primary_region = "lhr"
 [env]
   NODE_ENV = "production"
   SHIPFIG_DB_PATH = "/data/shipfig.db"
-  SHIPFIG_AGENT_PROVIDER = "anthropic"
+  SHIPFIG_AGENT_PROVIDER = "openai"
   SHIPFIG_GATEWAY_SPRITE = "shipfig-gateway"
-  SHIPFIG_ALLOWED_REPOS = "silentworks/shipfig-demo"
+  SHIPFIG_ALLOWED_REPOS = ""
 
 # Jobs run inside the server process and the database is SQLite on this
 # volume: keep exactly one machine, always on (a stopped machine would
