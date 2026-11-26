@@ -24,6 +24,8 @@ ENV NODE_ENV=production \
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
+# Postgres migrations, applied on startup by instrumentation.ts.
+COPY --from=build /app/drizzle ./drizzle
 # Fly volumes mount root-owned; the VM runs only this process.
 RUN mkdir -p /data
 EXPOSE 3000

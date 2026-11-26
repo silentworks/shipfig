@@ -186,10 +186,16 @@ fly secrets set -a <app-name> \
   SPRITES_TOKEN=... \
   SHIPFIG_GITHUB_CONNECTION_ID=... \
   ANTHROPIC_API_KEY=... \
+  DATABASE_URL=postgresql://... \
+  BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
+  BETTER_AUTH_URL=https://<app-name>.fly.dev \
+  GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=... GITHUB_APP_SLUG=... \
   SHIPFIG_OPERATOR_TOKEN=$(openssl rand -hex 24)
 fly deploy -a <app-name> --ha=false         # exactly one machine
 ```
 
+- The server applies pending Postgres migrations (`drizzle/`) on startup,
+  before it serves requests, so a new database needs no manual step.
 - Set secret values bare. A value copied from `.env.local` with its quotes
   keeps the quotes and fails authentication.
 - Non-secret settings (`SHIPFIG_AGENT_PROVIDER`, `SHIPFIG_ALLOWED_REPOS`,
