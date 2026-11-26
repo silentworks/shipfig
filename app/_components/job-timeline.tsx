@@ -142,35 +142,73 @@ function time(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-/** Detailed 8-step transition timeline (shown inside Technical details). */
+/** Detailed vertical transition timeline (shown inside Technical details, SIL-550). */
 export function JobTimeline({ steps, now }: { steps: TimelineStep[]; now: number }) {
   return (
-    <ol aria-label="Detailed step timeline" className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
-      {steps.map((step) => {
+    <ol aria-label="Detailed step timeline" className="flex flex-col">
+      {steps.map((step, idx) => {
         const icon = ICON[step.status];
         const active = step.status === "current" || step.status === "waiting";
+        const isLast = idx === steps.length - 1;
         const duration = step.startedAt ? (step.endedAt ? Date.parse(step.endedAt) : active ? now : null) : null;
+        const railDone = step.status === "done";
+
         return (
-          <li key={step.key} className="flex min-w-0 items-start gap-2">
-            <span
-              aria-hidden
-              className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-bold ${icon.tone}`}
-            >
-              {icon.symbol}
-            </span>
-            <span className="min-w-0 text-xs">
-              <span className={`block font-medium ${step.status === "upcoming" ? "text-zinc-400" : "text-zinc-800 dark:text-zinc-200"}`}>
-                {step.label}
+          <li key={step.key} aria-current={active ? "step" : undefined} className="relative flex gap-3">
+            {/* Vertical rail + status node */}
+            <div className="flex flex-col items-center">
+              <span
+                aria-hidden
+                className={`relative z-10 mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${icon.tone}`}
+              >
+                {icon.symbol}
               </span>
-              <span className="sr-only">: {icon.label}</span>
-              {step.startedAt && (
-                <span className="block font-mono text-[11px] text-zinc-500">
-                  <time dateTime={step.startedAt}>{time(step.startedAt)}</time>
-                  {duration !== null && ` · ${formatDuration(Math.max(0, duration - Date.parse(step.startedAt)))}`}
-                </span>
+              {!isLast && (
+                <span
+                  aria-hidden
+                  className={`my-1 w-px flex-1 min-h-4 ${
+                    railDone ? "bg-emerald-500/45" : "bg-zinc-200 dark:bg-zinc-800"
+                  }`}
+                />
               )}
-              {step.note && <span className="block text-[11px] text-zinc-500">{step.note}</span>}
-            </span>
+            </div>
+
+            {/* Step content */}
+            <div className={`flex min-w-0 flex-1 flex-col ${isLast ? "pb-0.5" : "pb-3.5"}`}>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-xs">
+                <span
+                  className={`font-medium ${
+                    step.status === "upcoming"
+                      ? "text-zinc-400 dark:text-zinc-500"
+                      : step.status === "failed"
+                        ? "text-red-700 dark:text-red-300"
+                        : step.status === "waiting"
+                          ? "text-amber-800 dark:text-amber-300"
+                          : "text-zinc-900 dark:text-zinc-100"
+                  }`}
+                >
+                  {step.label}
+                  <span className="sr-only">: {icon.label}</span>
+                </span>
+
+                {step.startedAt ? (
+                  <span className="shrink-0 font-mono text-[11px] text-zinc-500">
+                    <time dateTime={step.startedAt} title={step.startedAt}>
+                      {time(step.startedAt)}
+                    </time>
+                    {duration !== null && (
+                      <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">
+                        ({formatDuration(Math.max(0, duration - Date.parse(step.startedAt)))})
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-600">{icon.label}</span>
+                )}
+              </div>
+
+              {step.note && <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{step.note}</p>}
+            </div>
           </li>
         );
       })}
