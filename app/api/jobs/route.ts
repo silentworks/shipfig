@@ -1,5 +1,5 @@
 import { guardAction } from "@/lib/auth";
-import { after, connection } from "next/server";
+import { type NextRequest, after, connection } from "next/server";
 import { z } from "zod";
 import { getAllowedIssue } from "@/lib/github/connector";
 import { resolveGitHubRequest } from "@/lib/github/user-client";
@@ -9,14 +9,35 @@ import { startJobInBackground } from "@/lib/jobs/background";
 import { jobStore } from "@/lib/jobs/store";
 import { issueRefSchema } from "@/lib/validation";
 
-/** List recent jobs (newest first). Expires timed-out jobs first so states are honest. */
-export async function GET() {
+/**
+ * List recent jobs (newest first). Optional `owner`, `repo`, and `issueNumber`
+ * query params filter to jobs created against a specific issue.
+ */
+export async function GET(request?: NextRequest) {
   await connection();
   try {
     const store = jobStore();
     for (const expired of store.expireTimedOut()) after(() => startJobInBackground(expired.id));
+
+    const params = request?.nextUrl.searchParams;
+    const owner = params?.get("owner");
+    const repo = params?.get("repo");
+    const issueNumberParam = params?.get("issueNumber");
+    const hasAnyFilter = owner !== null && owner !== undefined || repo !== null && repo !== undefined || issueNumberParam !== null && issueNumberParam !== undefined;
+
+    let jobs;
+    if (hasAnyFilter) {
+      if (!owner || !repo || !issueNumberParam) {
+        return jsonError(400, "invalid_input", "owner, repo, and issueNumber query parameters must all be provided together");
+      }
+      const ref = issueRefSchema.parse({ owner, repo, issueNumber: Number(issueNumberParam) });
+      jobs = store.listForIssue(ref, 50);
+    } else {
+      jobs = store.list(50);
+    }
+
     return Response.json({
-      jobs: store.list(50),
+      jobs,
       activeJobId: store.activeJob()?.id ?? null,
       queuedJobIds: store.queuedJobs().map((j) => j.id),
     });

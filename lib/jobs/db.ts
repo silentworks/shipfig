@@ -95,6 +95,10 @@ const MIGRATIONS: string[] = [
   `
   CREATE INDEX jobs_queued_fifo ON jobs(state_entered_at ASC, created_at ASC, id ASC) WHERE state = 'queued' AND active IS NULL;
   `,
+  // v9: fast lookup of all jobs created against a specific GitHub issue.
+  `
+  CREATE INDEX jobs_issue ON jobs(repo_owner, repo_name, issue_number, created_at DESC, id);
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

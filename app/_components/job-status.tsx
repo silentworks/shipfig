@@ -187,13 +187,23 @@ export function JobStatus({ id }: { id: string }) {
                 {isWaitingInQueue ? ` · #${queuePosition} in queue` : ""}
                 {reason ? ` · ${reason.replace(/_/g, " ")}` : ""}
               </StatusBadge>
+              <Link
+                href={`/?repo=${encodeURIComponent(`${job.repoOwner}/${job.repoName}`)}&issue=${job.issueNumber}`}
+                className="font-medium text-zinc-700 hover:text-zinc-950 hover:underline dark:text-zinc-300 dark:hover:text-zinc-100"
+                title="View issue in Shipfig"
+              >
+                {job.repoOwner}/{job.repoName} #{job.issueNumber}
+              </Link>
+              <span aria-hidden className="text-zinc-300 dark:text-zinc-700">
+                ·
+              </span>
               <a
                 href={job.issueUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-zinc-500 hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
               >
-                {job.repoOwner}/{job.repoName} #{job.issueNumber} ↗
+                GitHub ↗
               </a>
             </div>
 

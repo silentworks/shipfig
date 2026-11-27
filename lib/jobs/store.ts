@@ -476,6 +476,20 @@ export class JobStore {
     return rows.map(rowToJob);
   }
 
+  /** List jobs created against a specific repository issue (newest first). */
+  listForIssue(ref: IssueRef, limit = 50): Job[] {
+    const validated = issueRefSchema.parse(ref);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE repo_owner = ? AND repo_name = ? AND issue_number = ?
+         ORDER BY created_at DESC, id
+         LIMIT ?`,
+      )
+      .all(validated.owner, validated.repo, validated.issueNumber, limit) as Row[];
+    return rows.map(rowToJob);
+  }
+
   events(jobId: string, afterId = 0): JobEvent[] {
     const rows = this.db
       .prepare("SELECT * FROM job_events WHERE job_id = ? AND id > ? ORDER BY id")
