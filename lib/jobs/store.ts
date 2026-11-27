@@ -634,6 +634,35 @@ export class JobStore {
   }
 
   /**
+   * Update the proposed plan while awaiting plan approval (SIL-555).
+   * Enforces optimistic concurrency (`expectedVersion`), increments `version`,
+   * and logs the edit in `job_events`.
+   */
+  updatePlan(id: string, expectedVersion: number, plan: unknown, editedBy: string, now = new Date()): Job {
+    const at = now.toISOString();
+    this.tx(() => {
+      const job = this.get(id);
+      if (job.state !== "awaiting_plan_approval") {
+        throw new InvalidTransitionError(`Job ${id} is ${job.state}, expected awaiting_plan_approval`);
+      }
+      if (job.version !== expectedVersion) {
+        throw new InvalidTransitionError(`Job ${id} was modified concurrently (version ${job.version} ≠ ${expectedVersion})`);
+      }
+      const result = this.db
+        .prepare("UPDATE jobs SET plan = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'awaiting_plan_approval'")
+        .run(sanitizeOutput(JSON.stringify(plan), MAX_PLAN_CHARS), at, id, job.version);
+      if (result.changes !== 1) throw new InvalidTransitionError(`Job ${id} was modified concurrently`);
+
+      const record = plan as { plan?: { files?: string[]; changes?: string[] }; runnableChecks?: string[] } | null;
+      const filesCount = record?.plan?.files?.length ?? 0;
+      const changesCount = record?.plan?.changes?.length ?? 0;
+      const checks = record?.runnableChecks?.join(", ") || "none";
+      this.insertEvent(id, at, "info", `Plan edited by ${editedBy}: ${filesCount} file(s), ${changesCount} change(s), checks ${checks}`);
+    });
+    return this.get(id);
+  }
+
+  /**
    * Approve the plan currently shown to the user. `expectedVersion` must match
    * the version the user saw, so a plan that changed since cannot be approved.
    */

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { PlanEdit } from "@/lib/agent/planner";
 import { AWAITING_HUMAN_STATES, type JobState, STATE_LABELS, isTerminal } from "@/lib/jobs/states";
 import type { Job, JobEvent } from "@/lib/jobs/store";
 import { jobTimeline } from "@/lib/jobs/timeline";
@@ -144,6 +145,28 @@ export function JobStatus({ id }: { id: string }) {
       setRefresh((n) => n + 1);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePlan(plan: PlanEdit, andApprove: boolean) {
+    if (!job) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetchJson<{ job: Job }>(`/api/jobs/${id}/plan`, {
+        method: "PATCH",
+        body: JSON.stringify({ version: job.version, plan }),
+      });
+      setJob(res.job);
+      if (andApprove) {
+        await fetchJson(`/api/jobs/${id}/plan`, {
+          method: "POST",
+          body: JSON.stringify({ decision: "approve", version: res.job.version }),
+        });
+      }
+      setRefresh((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -307,6 +330,7 @@ export function JobStatus({ id }: { id: string }) {
                   busy={busy}
                   highlightApproval={awaitingPlan}
                   onDecision={(decision) => post("/plan", { decision, version: job.version })}
+                  onSavePlan={savePlan}
                 />
               ) : (
                 <Panel title="Plan">

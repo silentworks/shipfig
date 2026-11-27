@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AgentLimitError, AgentStoppedError, defineTool, runToolLoop } from "@/lib/agent/loop";
 import { PathPolicyError, isSecretPath, normalizeRepoPath, resolveInside } from "@/lib/agent/paths";
-import { CHECKS, type Plan, type PlanRecord, buildPlannerContext, planIssue, planSchema, untrusted } from "@/lib/agent/planner";
+import { CHECKS, type Plan, PlanEditError, type PlanRecord, applyPlanEdit, buildPlannerContext, planIssue, planSchema, untrusted } from "@/lib/agent/planner";
 import { checkCommand } from "@/lib/verify/checks";
 import type { Issue } from "@/lib/github/schemas";
 import { openDatabase } from "@/lib/jobs/db";
@@ -249,5 +249,105 @@ describe("typecheck check", () => {
     expect(CHECKS).toContain("typecheck");
     expect(planSchema.shape.checks.safeParse(["test", "lint", "typecheck", "build"]).success).toBe(true);
     expect(checkCommand("typecheck")).toEqual(["npm", "run", "typecheck"]);
+  });
+});
+
+describe("manual plan editing (SIL-555)", () => {
+  const baseRecord: PlanRecord = {
+    plan: {
+      summary: "Original summary",
+      files: ["src/sum.ts", "src/sum.test.ts"],
+      changes: ["Fix sum() to add instead of subtract"],
+      checks: ["test"],
+      risks: [],
+      needsClarification: false,
+      clarificationQuestion: null,
+    },
+    existingFiles: ["src/sum.ts", "src/sum.test.ts"],
+    newFiles: [],
+    invalidFiles: [],
+    runnableChecks: ["test"],
+    missingChecks: [],
+    analysis: {
+      model: "fake",
+      turns: 1,
+      toolCalls: 1,
+      inputTokens: 100,
+      outputTokens: 50,
+      filesRead: ["src/sum.ts"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+
+  it("applies valid edits, classifies existing vs new files, and recomputes runnable checks", () => {
+    const edited = applyPlanEdit(
+      baseRecord,
+      {
+        summary: "Updated summary with edge-case handling",
+        files: ["src/sum.ts", "src/extra.test.ts", "./src/sum.ts"],
+        changes: ["Fix sum() operator", "Add negative number test"],
+        checks: ["test", "lint"],
+        risks: ["Check NaN inputs"],
+      },
+      { test: "vitest run" },
+      "Ada Lovelace",
+      new Date("2026-01-02T00:00:00.000Z"),
+    );
+
+    expect(edited.plan.summary).toBe("Updated summary with edge-case handling");
+    expect(edited.plan.files).toEqual(["src/sum.ts", "src/extra.test.ts"]);
+    expect(edited.existingFiles).toEqual(["src/sum.ts"]);
+    expect(edited.newFiles).toEqual(["src/extra.test.ts"]);
+    expect(edited.invalidFiles).toEqual([]);
+    expect(edited.runnableChecks).toEqual(["test"]);
+    expect(edited.missingChecks).toEqual(["lint"]);
+    expect(edited.edited).toEqual({ editedBy: "Ada Lovelace", editedAt: "2026-01-02T00:00:00.000Z" });
+  });
+
+  it("rejects protected and secret file paths", () => {
+    for (const badPath of ["package.json", ".github/workflows/deploy.yml", ".env.local", "../outside.ts"]) {
+      expect(
+        () =>
+          applyPlanEdit(
+            baseRecord,
+            { summary: "Edit", files: [badPath], changes: ["Do thing"], checks: ["test"], risks: [] },
+            { test: "vitest run" },
+            "Ada",
+          ),
+        badPath,
+      ).toThrow(PlanEditError);
+    }
+  });
+
+  it("persists edited plans with version bump, audit event, and optimistic concurrency", () => {
+    const s = new JobStore(openDatabase(":memory:"));
+    const job = s.create({ owner: "acme", repo: "web", issueNumber: 1, issueTitle: "t", issueUrl: "https://github.com/acme/web/issues/1" });
+    s.transition(job.id, "provisioning");
+    s.transition(job.id, "planning");
+    const awaiting = s.transition(job.id, "awaiting_plan_approval", { patch: { plan: baseRecord } });
+
+    const editedRecord = applyPlanEdit(
+      baseRecord,
+      { summary: "Refined summary", files: ["src/sum.ts"], changes: ["Fix addition"], checks: ["test"], risks: [] },
+      { test: "vitest run" },
+      "Ada Lovelace",
+    );
+
+    // Wrong version is rejected.
+    expect(() => s.updatePlan(job.id, awaiting.version + 1, editedRecord, "Ada Lovelace")).toThrow(InvalidTransitionError);
+
+    // Matching version succeeds, bumps version, and logs audit event.
+    const updated = s.updatePlan(job.id, awaiting.version, editedRecord, "Ada Lovelace");
+    expect(updated.version).toBe(awaiting.version + 1);
+    expect((updated.plan as PlanRecord).plan.summary).toBe("Refined summary");
+    expect(s.events(job.id).at(-1)?.message).toContain("Plan edited by Ada Lovelace");
+
+    // Stale version can no longer approve; new version succeeds.
+    expect(() => s.approvePlan(job.id, awaiting.version, "Ada Lovelace")).toThrow(InvalidTransitionError);
+    const approved = s.approvePlan(job.id, updated.version, "Ada Lovelace");
+    expect(approved.state).toBe("editing");
+
+    // Cannot edit once past awaiting_plan_approval.
+    expect(() => s.updatePlan(job.id, approved.version, editedRecord, "Ada Lovelace")).toThrow(InvalidTransitionError);
   });
 });

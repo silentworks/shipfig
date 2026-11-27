@@ -6,6 +6,7 @@ import type { Sandbox } from "@/lib/sprites/sandbox";
 import { type LoopEvent, runToolLoop } from "./loop";
 import type { AgentModel } from "./model";
 import { PathPolicyError, normalizeRepoPath } from "./paths";
+import { writePolicy } from "./policy";
 import { ReadBudget, listTrackedFiles, readOnlyTools, readRepoFile } from "./workspace-tools";
 
 /**
@@ -28,6 +29,23 @@ export const planSchema = z.object({
 });
 export type Plan = z.infer<typeof planSchema>;
 
+/** User-editable fields of a proposed plan (SIL-555). */
+export const planEditSchema = z.strictObject({
+  summary: z.string().trim().min(1, "Summary is required").max(1500),
+  files: z.array(z.string().trim().min(1, "File path cannot be empty").max(300)).max(12),
+  changes: z.array(z.string().trim().min(1, "Change item cannot be empty").max(500)).min(1, "At least one proposed change is required").max(8),
+  checks: z.array(z.enum(CHECKS)).max(CHECKS.length),
+  risks: z.array(z.string().trim().min(1, "Risk item cannot be empty").max(500)).max(8),
+});
+export type PlanEdit = z.infer<typeof planEditSchema>;
+
+export class PlanEditError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PlanEditError";
+  }
+}
+
 /** The plan plus what the server verified about it. Stored on the job. */
 export interface PlanRecord {
   plan: Plan;
@@ -49,6 +67,11 @@ export interface PlanRecord {
     outputTokens: number;
     filesRead: string[];
     createdAt: string;
+  };
+  /** Set when a human manually edited the proposed plan before approval. */
+  edited?: {
+    editedBy: string;
+    editedAt: string;
   };
 }
 
@@ -114,6 +137,63 @@ export function buildPlannerContext(input: { issue: Issue; repoSlug: string; scr
 
 export function scriptForCheck(check: Check, scripts: Record<string, string>): string | null {
   return check in scripts ? check : null;
+}
+
+/**
+ * Validate and apply a user's manual edits to a proposed plan (SIL-555).
+ * Enforces the same write policy as the executor so protected files and
+ * secret paths cannot be added to the plan, and recomputes runnable/missing
+ * checks against the workspace's package.json scripts.
+ */
+export function applyPlanEdit(
+  existing: PlanRecord,
+  edit: PlanEdit,
+  scripts: Record<string, string>,
+  editedBy: string,
+  now = new Date(),
+): PlanRecord {
+  const parsed = planEditSchema.parse(edit);
+  const knownExisting = new Set([...existing.existingFiles, ...(existing.analysis?.filesRead ?? [])]);
+  const normalizedFiles: string[] = [];
+  const existingFiles: string[] = [];
+  const newFiles: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of parsed.files) {
+    const verdict = writePolicy(raw);
+    if (!verdict.ok) {
+      throw new PlanEditError(`Disallowed file path "${raw}": ${verdict.reason}`);
+    }
+    const path = normalizeRepoPath(raw);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    normalizedFiles.push(path);
+    (knownExisting.has(path) ? existingFiles : newFiles).push(path);
+  }
+
+  const requested = [...new Set(parsed.checks)];
+  return {
+    ...existing,
+    plan: {
+      ...existing.plan,
+      summary: parsed.summary,
+      files: normalizedFiles,
+      changes: parsed.changes,
+      checks: requested,
+      risks: parsed.risks,
+      needsClarification: false,
+      clarificationQuestion: null,
+    },
+    existingFiles,
+    newFiles,
+    invalidFiles: [],
+    runnableChecks: requested.filter((c) => scriptForCheck(c, scripts)),
+    missingChecks: requested.filter((c) => !scriptForCheck(c, scripts)),
+    edited: {
+      editedBy: editedBy.slice(0, 200),
+      editedAt: now.toISOString(),
+    },
+  };
 }
 
 export async function planIssue(input: PlanInput): Promise<PlanRecord> {
