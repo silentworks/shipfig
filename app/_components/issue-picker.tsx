@@ -8,6 +8,7 @@ import type { Job } from "@/lib/jobs/store";
 import { ActiveJobBanner } from "./active-job-banner";
 import { ApiError, fetchJson, useResource } from "./api";
 import { GitHubConnectButton } from "./github-connect-button";
+import { IssueJobsList } from "./issue-jobs-list";
 import { Markdown } from "./markdown";
 import { Button, EmptyState, ErrorNotice, Loading } from "./ui";
 
@@ -475,6 +476,10 @@ export function IssuePicker() {
                         <p className="text-sm italic text-zinc-400">No description provided.</p>
                       )}
                     </article>
+
+                    {selectedRepo && selectedIssue && (
+                      <IssueJobsList key={`${selectedRepo}#${selectedIssue}`} repo={selectedRepo} issueNumber={selectedIssue} />
+                    )}
                   </>
                 )}
               </div>

@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const gateway = vi.hoisted(() => ({ request: vi.fn() }));
@@ -27,6 +28,7 @@ const background = vi.hoisted(() => ({ start: vi.fn() }));
 vi.mock("next/server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/server")>()),
   after: (cb: () => void) => cb(),
+  connection: async () => {},
 }));
 vi.mock("@/lib/jobs/background", () => ({ startJobInBackground: background.start }));
 
@@ -193,5 +195,20 @@ describe("POST /api/jobs", () => {
     const res = await post({ owner: "acme", repo: "web", issueNumber: 6 });
     expect(res.status).toBe(409);
     expect(jobStore().activeJob()).toBeUndefined();
+  });
+
+  it("filters GET /api/jobs by issue and rejects partial filter params", async () => {
+    const a = await post({ owner: "acme", repo: "web", issueNumber: 5 });
+    const jobA = (await a.json()).job;
+    jobStore().create({ owner: "acme", repo: "web", issueNumber: 99, issueTitle: "Other", issueUrl: "https://github.com/acme/web/issues/99" });
+
+    const filtered = await jobsRoute.GET(new NextRequest("http://localhost/api/jobs?owner=acme&repo=web&issueNumber=5"));
+    expect(filtered.status).toBe(200);
+    const body = await filtered.json();
+    expect(body.jobs.every((j: { issueNumber: number }) => j.issueNumber === 5)).toBe(true);
+    expect(body.jobs.some((j: { id: string }) => j.id === jobA.id)).toBe(true);
+
+    const partial = await jobsRoute.GET(new NextRequest("http://localhost/api/jobs?owner=acme&repo=web"));
+    expect(partial.status).toBe(400);
   });
 });

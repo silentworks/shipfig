@@ -213,6 +213,19 @@ describe("one active job & FIFO queue", () => {
     expect(store.activeJob()?.id).toBe(second.id);
     expect(promoted).toEqual([second.id]);
   });
+
+  it("lists jobs created against a specific issue newest first", () => {
+    const t0 = new Date("2026-01-01T00:00:00Z");
+    const t1 = new Date("2026-01-01T00:01:00Z");
+    const t2 = new Date("2026-01-01T00:02:00Z");
+    const first = store.create(input, t0);
+    store.create({ ...input, issueNumber: 8 }, t1);
+    const secondForIssue7 = store.create(input, t2);
+    store.create({ ...input, repo: "other", issueNumber: 7 }, t2);
+
+    const forIssue7 = store.listForIssue({ owner: "acme", repo: "web", issueNumber: 7 });
+    expect(forIssue7.map((j) => j.id)).toEqual([secondForIssue7.id, first.id]);
+  });
 });
 
 describe("bounded loops", () => {
